@@ -12,39 +12,6 @@ export interface MediaAsset {
   createdAt: string;
 }
 
-export interface TimedEvent {
-  id: string;
-  title: string;
-  startDate: string;
-  endDate: string;
-  curator: string;
-  artworkIds: string[];
-  bannerUrl: string;
-}
-
-export interface QuizQuestion {
-  question: string;
-  options: string[];
-  correctAnswer: number;
-  explanation: string;
-}
-
-export interface Badge {
-  id: string;
-  name: string;
-  icon: string;
-  description: string;
-  unlocked: boolean;
-}
-
-export interface UserStats {
-  level: number;
-  xp: number;
-  sitesVisited: number;
-  quizzesSolved: number;
-  badges: Badge[];
-}
-
 export interface POI {
   id: string;
   title: string;
@@ -58,31 +25,8 @@ export interface POI {
   narrativeInsight: string;
   anchoredAssetId?: string;
   displayMode: 'ar' | 'studio' | 'hybrid' | 'text';
-}
-
-export interface ExperienceJourney {
-  id: string;
-  theme: string;
-  city: string;
-  organization: string;
-  creator: string;
-  points: POI[];
-  qrCodeUrl: string;
-  createdAt: string;
-  isEvent?: boolean;
-  startDate?: string;
-  endDate?: string;
-  coverImage?: string;
-}
-
-export interface HeritageSite {
-  id: string;
-  name: string;
-  history: string;
-  location: {
-    lat: number;
-    lng: number;
-  };
+  audioUrl?: string;
+  videoUrl?: string;
 }
 
 export interface Artwork {
@@ -97,8 +41,65 @@ export interface Artwork {
   };
   imageUrl: string;
   modelUrl?: string;
+  audioUrl?: string;
+  videoUrl?: string;
   category: 'Modern' | 'Heritage' | 'Abstract' | 'Interactive' | 'Soundscape';
   isTimedEvent?: boolean;
+}
+
+/**
+ * Fixed: Added HeritageSite interface
+ */
+export interface HeritageSite {
+  id: string;
+  name: string;
+  history: string;
+  location: { lat: number; lng: number };
+}
+
+/**
+ * Fixed: Added ExperienceJourney interface
+ */
+export interface ExperienceJourney {
+  id: string;
+  theme: string;
+  city: string;
+  organization: string;
+  creator: string;
+  points: POI[];
+  qrCodeUrl: string;
+  createdAt?: string;
+  isEvent: boolean;
+  startDate?: string;
+  endDate?: string;
+  coverImage?: string;
+}
+
+/**
+ * Fixed: Added UserStats interface
+ */
+export interface UserStats {
+  level: number;
+  xp: number;
+  sitesVisited: number;
+  quizzesSolved: number;
+  badges: Array<{
+    id: string;
+    name: string;
+    icon: string;
+    description: string;
+    unlocked: boolean;
+  }>;
+}
+
+/**
+ * Fixed: Added QuizQuestion interface
+ */
+export interface QuizQuestion {
+  question: string;
+  options: string[];
+  correctAnswer: number;
+  explanation: string;
 }
 
 export type PortalMode = 'visitor' | 'creator' | 'curator';

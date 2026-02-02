@@ -1,7 +1,12 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { MapPin, Navigation, ZoomIn, ZoomOut, MousePointer2, Sparkles, RefreshCw, Smartphone } from 'lucide-react';
+import { MapPin, Navigation, ZoomIn, ZoomOut, MousePointer2, Sparkles, RefreshCw, Smartphone, Globe, Layers, X } from 'lucide-react';
 import { Artwork, Language } from '../types';
+
+/**
+ * Fixed: Added global declaration for google to fix "Cannot find name 'google'"
+ */
+declare var google: any;
 
 interface MapExplorerProps {
   artworks: Artwork[];
@@ -9,13 +14,123 @@ interface MapExplorerProps {
   lang: Language;
 }
 
+const DARK_MAP_STYLE = [
+  { "elementType": "geometry", "stylers": [{ "color": "#020617" }] },
+  { "elementType": "labels.text.stroke", "stylers": [{ "color": "#020617" }] },
+  { "elementType": "labels.text.fill", "stylers": [{ "color": "#6366f1" }] },
+  { "featureType": "administrative.locality", "elementType": "labels.text.fill", "stylers": [{ "color": "#94a3b8" }] },
+  { "featureType": "poi", "elementType": "labels.text.fill", "stylers": [{ "color": "#6366f1" }] },
+  { "featureType": "poi.park", "elementType": "geometry", "stylers": [{ "color": "#0f172a" }] },
+  { "featureType": "road", "elementType": "geometry", "stylers": [{ "color": "#1e293b" }] },
+  { "featureType": "road", "elementType": "geometry.stroke", "stylers": [{ "color": "#334155" }] },
+  { "featureType": "water", "elementType": "geometry", "stylers": [{ "color": "#000000" }] }
+];
+
 const MapExplorer: React.FC<MapExplorerProps> = ({ artworks, onSelectArtwork, lang }) => {
+  const [viewType, setViewType] = useState<'spatial' | 'satellite'>('spatial');
   const [mouse, setMouse] = useState({ x: 0, y: 0 });
   const [previewArtwork, setPreviewArtwork] = useState<Artwork | null>(null);
-  const [motionEnabled, setMotionEnabled] = useState(false);
-  const [deviceTilt, setDeviceTilt] = useState({ beta: 0, gamma: 0 });
   
   const mapContainerRef = useRef<HTMLDivElement>(null);
+  const googleMapRef = useRef<HTMLDivElement>(null);
+  /**
+   * Fixed: Use any to avoid "Cannot find namespace 'google'" error if type definitions are missing
+   */
+  const mapInstance = useRef<any>(null);
+
+  // Helper to extract Drive File ID
+  function extractFileId(url: string | undefined) {
+    if (!url) return '';
+    const match = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
+    return match ? match[1] : '';
+  }
+
+  // Initialize Google Map
+  useEffect(() => {
+    if (viewType === 'satellite' && googleMapRef.current && !mapInstance.current) {
+      /**
+       * Fixed: Uses global google instance from declared variable
+       */
+      const map = new google.maps.Map(googleMapRef.current, {
+        center: { lat: 24.7136, lng: 46.6753 },
+        zoom: 12,
+        styles: DARK_MAP_STYLE,
+        disableDefaultUI: true,
+        zoomControl: true,
+      });
+
+      mapInstance.current = map;
+
+      artworks.forEach(point => {
+        /**
+         * Fixed: Uses global google instance
+         */
+        const marker = new google.maps.Marker({
+          position: { lat: point.location.lat, lng: point.location.lng },
+          map: map,
+          title: point.title,
+          icon: {
+            path: google.maps.SymbolPath.CIRCLE,
+            fillColor: '#6366f1',
+            fillOpacity: 1,
+            strokeWeight: 2,
+            strokeColor: '#ffffff',
+            scale: 8
+          }
+        });
+
+        const driveImg = extractFileId(point.imageUrl);
+        const driveAudio = extractFileId(point.audioUrl);
+        const driveVideo = extractFileId(point.videoUrl);
+
+        const contentString = `
+          <div style="max-width: 280px; font-family: 'Plus Jakarta Sans', sans-serif; background: #020617; color: white; padding: 12px; border-radius: 16px; direction: ${lang === 'ar' ? 'rtl' : 'ltr'}; text-align: ${lang === 'ar' ? 'right' : 'left'};">
+            <h3 style="margin: 0 0 8px 0; font-size: 16px; font-weight: 800; text-transform: uppercase; color: #6366f1;">${point.title}</h3>
+            <p style="font-size: 11px; color: #94a3b8; margin-bottom: 12px;">${point.description}</p>
+            
+            ${driveImg ? `<img src="https://drive.google.com/uc?export=view&id=${driveImg}" style="width:100%; border-radius:12px; margin-bottom:12px; border: 1px solid rgba(255,255,255,0.1);" />` : `<img src="${point.imageUrl}" style="width:100%; border-radius:12px; margin-bottom:12px;" />`}
+            
+            ${point.audioUrl ? `
+              <div style="background: rgba(255,255,255,0.05); padding: 8px; border-radius: 12px; margin-bottom: 8px;">
+                <audio controls style="width: 100%; height: 30px;">
+                  <source src="https://drive.google.com/uc?export=view&id=${driveAudio}" type="audio/mpeg">
+                </audio>
+              </div>
+            ` : ''}
+
+            ${point.videoUrl ? `
+              <video controls style="width: 100%; border-radius: 12px; margin-bottom: 8px;">
+                <source src="https://drive.google.com/uc?export=view&id=${driveVideo}" type="video/mp4">
+              </video>
+            ` : ''}
+
+            <button id="enter-ar-${point.id}" style="width: 100%; background: #6366f1; color: white; border: none; padding: 10px; border-radius: 12px; font-weight: 800; font-size: 10px; text-transform: uppercase; cursor: pointer; letter-spacing: 1px;">
+              ${lang === 'ar' ? 'دخول الواقع المعزز ←' : 'Enter AR Layer →'}
+            </button>
+          </div>
+        `;
+
+        /**
+         * Fixed: Uses global google instance
+         */
+        const infoWindow = new google.maps.InfoWindow({
+          content: contentString,
+          maxWidth: 300,
+        });
+
+        marker.addListener("click", () => {
+          infoWindow.open(map, marker);
+          /**
+           * Fixed: Uses global google instance
+           */
+          google.maps.event.addListenerOnce(infoWindow, 'domready', () => {
+            const btn = document.getElementById(`enter-ar-${point.id}`);
+            if (btn) btn.onclick = () => onSelectArtwork(point);
+          });
+        });
+      });
+    }
+  }, [viewType, artworks, lang, onSelectArtwork]);
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -33,28 +148,6 @@ const MapExplorer: React.FC<MapExplorerProps> = ({ artworks, onSelectArtwork, la
     return () => window.removeEventListener('mousemove', handleMouseMove);
   }, []);
 
-  const requestDeviceOrientation = async () => {
-    if (typeof DeviceOrientationEvent === 'undefined') {
-      alert("Motion sensors not supported on this device/browser.");
-      return;
-    }
-
-    if (typeof (DeviceOrientationEvent as any).requestPermission === 'function') {
-      try {
-        const permission = await (DeviceOrientationEvent as any).requestPermission();
-        if (permission !== 'granted') return;
-      } catch (err) {
-        return;
-      }
-    }
-
-    setMotionEnabled(true);
-    const handleOrientation = (event: DeviceOrientationEvent) => {
-      setDeviceTilt({ beta: (event.beta ?? 0) * 0.4, gamma: (event.gamma ?? 0) * 0.6 });
-    };
-    window.addEventListener('deviceorientation', handleOrientation, { passive: true });
-  };
-
   const resetMap = () => setPreviewArtwork(null);
 
   const focusedOffset = useMemo(() => {
@@ -65,23 +158,32 @@ const MapExplorer: React.FC<MapExplorerProps> = ({ artworks, onSelectArtwork, la
 
   return (
     <div className="relative h-full w-full bg-[#050505] overflow-hidden flex flex-col perspective-2000">
+      
+      {/* View Toggles */}
       <div className="absolute top-10 right-10 z-[70] flex flex-col gap-3">
-        <button 
-          onClick={resetMap}
-          className={`px-6 py-3 rounded-2xl font-black text-[10px] tracking-[0.2em] transition-all border flex items-center gap-3 ${previewArtwork ? 'bg-indigo-600 text-white border-indigo-400 shadow-[0_0_20px_rgba(99,102,241,0.3)]' : 'bg-white/10 text-white/40 border-white/10 opacity-50 cursor-not-allowed'}`}
-          disabled={!previewArtwork}
-        >
-          <RefreshCw className="w-4 h-4" />
-          RESET SPATIAL VIEW
-        </button>
+        <div className="bg-black/40 backdrop-blur-xl border border-white/10 rounded-2xl p-1 flex">
+           <button 
+            onClick={() => setViewType('spatial')}
+            className={`flex items-center gap-2 px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${viewType === 'spatial' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}
+           >
+             <Layers size={14} /> Spatial
+           </button>
+           <button 
+            onClick={() => setViewType('satellite')}
+            className={`flex items-center gap-2 px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${viewType === 'satellite' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}
+           >
+             <Globe size={14} /> Satellite
+           </button>
+        </div>
 
-        {!motionEnabled && (
-          <button
-            onClick={requestDeviceOrientation}
-            className="px-6 py-3 rounded-2xl font-black text-[10px] tracking-[0.2em] bg-white/5 text-white/60 border border-white/10 hover:bg-white/10 hover:text-white transition-all flex items-center gap-2 backdrop-blur-md"
+        {viewType === 'spatial' && (
+          <button 
+            onClick={resetMap}
+            className={`px-6 py-3 rounded-2xl font-black text-[10px] tracking-[0.2em] transition-all border flex items-center gap-3 ${previewArtwork ? 'bg-indigo-600 text-white border-indigo-400 shadow-[0_0_20px_rgba(99,102,241,0.3)]' : 'bg-white/10 text-white/40 border-white/10 opacity-50 cursor-not-allowed'}`}
+            disabled={!previewArtwork}
           >
-            <Smartphone className="w-4 h-4" />
-            ENABLE MOTION CONTROL
+            <RefreshCw className="w-4 h-4" />
+            RESET SPATIAL VIEW
           </button>
         )}
       </div>
@@ -89,20 +191,24 @@ const MapExplorer: React.FC<MapExplorerProps> = ({ artworks, onSelectArtwork, la
       <div className="absolute top-10 left-10 z-[70] pointer-events-none">
         <h1 className="text-4xl font-black text-white tracking-tighter uppercase mb-1">Urban Explorer</h1>
         <p className="text-indigo-400 font-bold uppercase tracking-[0.3em] text-[10px] flex items-center gap-2">
-          <Sparkles size={12} className="animate-pulse" /> Grid Sync: Online
+          <Sparkles size={12} className="animate-pulse" /> {viewType === 'spatial' ? 'Spatial Grid Sync' : 'Geolocated Link'}
         </p>
       </div>
 
+      {/* SATELLITE GOOGLE MAP VIEW */}
+      <div className={`absolute inset-0 transition-opacity duration-1000 ${viewType === 'satellite' ? 'opacity-100 z-50' : 'opacity-0 -z-10'}`}>
+        <div ref={googleMapRef} className="w-full h-full" />
+      </div>
+
+      {/* SPATIAL 3D GRID VIEW */}
       <div 
         ref={mapContainerRef}
-        className="absolute inset-0 will-change-transform"
+        className={`absolute inset-0 will-change-transform ${viewType === 'spatial' ? 'opacity-100' : 'opacity-0'}`}
         style={{ 
           transformStyle: 'preserve-3d',
           transform: previewArtwork 
             ? `translateZ(420px) rotateX(62deg) rotateZ(2deg) translate3d(${focusedOffset}px, 180px, 0)`
-            : motionEnabled
-              ? `rotateX(${deviceTilt.beta}deg) rotateY(${deviceTilt.gamma}deg) rotateZ(-6deg) translateZ(20px)`
-              : `rotateX(${mouse.y * 10}deg) rotateY(${mouse.x * -18}deg) rotateZ(-6deg) translateZ(20px)`,
+            : `rotateX(${mouse.y * 10}deg) rotateY(${mouse.x * -18}deg) rotateZ(-6deg) translateZ(20px)`,
           transition: previewArtwork ? 'transform 1.3s cubic-bezier(0.23, 1, 0.32, 1)' : 'transform 0.4s ease-out',
         }}
         onClick={(e) => e.target === e.currentTarget && resetMap()}
@@ -121,7 +227,6 @@ const MapExplorer: React.FC<MapExplorerProps> = ({ artworks, onSelectArtwork, la
               <div className="group relative cursor-pointer" style={{ transformStyle: 'preserve-3d' }} onClick={(e) => { e.stopPropagation(); isFocused ? onSelectArtwork(art) : setPreviewArtwork(art); }}>
                 <div className="absolute -inset-10 flex items-center justify-center">
                   <div className={`absolute w-20 h-20 border border-indigo-500/30 rounded-full animate-[ping_3s_infinite] ${isFocused ? 'scale-150' : ''}`}></div>
-                  <div className={`absolute w-12 h-12 border-2 border-indigo-500/50 rounded-full ${isFocused ? 'animate-pulse' : ''}`}></div>
                 </div>
 
                 <div className={`p-4 rounded-[22px] border-2 transition-all duration-[900ms] ${isFocused ? 'bg-indigo-600 border-white text-white shadow-[0_20px_50px_rgba(99,102,241,0.6)]' : 'bg-slate-950 border-indigo-500/30 text-indigo-400 group-hover:border-indigo-400'}`}

@@ -4,15 +4,28 @@ import { createClient } from '@supabase/supabase-js';
 const SUPABASE_URL = 'https://moqahxuwuqqsqimiotgv.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_5u2THbc6_dYkfuVL7Cbc7g_gF1HFmH9';
 
-/**
- * Standard Supabase client for browser-based React applications.
- * Directly uses the provided project URL and public key.
- */
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 /**
+ * Utilities inspired by the Cultural Canvas Schema
+ */
+export function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\s-]/g, '')
+    .replace(/[\s_-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+export function formatFileSize(mb: number): string {
+  if (mb === 0) return '0 MB';
+  if (mb < 1024) return `${mb} MB`;
+  return `${(mb / 1024).toFixed(2)} GB`;
+}
+
+/**
  * Type-safe database interface for the Awasser s4 Virtual Museum.
- * Handles the mapping between database snake_case and application camelCase.
  */
 export const db = {
   exhibitions: {
@@ -60,8 +73,8 @@ export const db = {
       if (error) throw error;
       return (data || []).map(item => ({
         ...item,
-        imageUrl: item.imageUrl || item.image_url,
-        modelUrl: item.modelUrl || item.model_url
+        imageUrl: item.image_url,
+        modelUrl: item.model_url
       }));
     }
   },
@@ -85,8 +98,8 @@ export const db = {
           title: asset.title,
           type: asset.type,
           url: asset.url,
-          status: asset.status,
-          size_in_mb: asset.size_in_mb
+          status: asset.status || 'ready',
+          size_in_mb: asset.size_in_mb || 0
         }])
         .select();
       if (error) throw error;
