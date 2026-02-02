@@ -13,6 +13,9 @@ import ExhibitionsCatalogue from './components/ExhibitionsCatalogue';
 import { ViewState, Artwork, PortalMode, Language, ExperienceJourney } from './types';
 import { translations } from './translations';
 import { ARTWORKS } from './constants';
+import { db } from './lib/supabase';
+// Added missing RefreshCw import from lucide-react
+import { RefreshCw } from 'lucide-react';
 
 const App: React.FC = () => {
   const [view, setView] = useState<ViewState>('landing');
@@ -22,13 +25,30 @@ const App: React.FC = () => {
   const [lang, setLang] = useState<Language>('ar');
   const [activeJourney, setActiveJourney] = useState<ExperienceJourney | null>(null);
   const [publishedExhibitions, setPublishedExhibitions] = useState<ExperienceJourney[]>([]);
+  const [isSyncing, setIsSyncing] = useState(true);
 
   const t = translations[lang];
 
-  // Logic to handle navigation to AR view more robustly
+  // Fetch data from Supabase on mount
+  useEffect(() => {
+    async function syncNexus() {
+      try {
+        setIsSyncing(true);
+        const [exhibitions] = await Promise.all([
+          db.exhibitions.getAll()
+        ]);
+        setPublishedExhibitions(exhibitions || []);
+      } catch (error) {
+        console.warn("Supabase Sync Failed. Falling back to session state.", error);
+      } finally {
+        setIsSyncing(false);
+      }
+    }
+    syncNexus();
+  }, []);
+
   const enterARView = () => {
     if (!selectedArtwork) {
-      // Default to the first artwork if none selected
       setSelectedArtwork(ARTWORKS[0]);
     }
     setView('ar-view');
@@ -74,7 +94,6 @@ const App: React.FC = () => {
   const isFullWidthView = view === 'dashboard';
 
   const renderView = () => {
-    // Adding a wrapping div with a key to force re-mounting and ensure animations trigger
     return (
       <div key={view} className="h-full w-full view-transition">
         {(() => {
@@ -102,7 +121,8 @@ const App: React.FC = () => {
                 <ExhibitionsCatalogue 
                   exhibitions={publishedExhibitions} 
                   onSelect={handleExhibitionSelect} 
-                  lang={lang} 
+                  lang={lang}
+                  isLoading={isSyncing}
                 />
               );
             case 'explore':
@@ -130,7 +150,14 @@ const App: React.FC = () => {
 
   return (
     <div className={`relative h-screen w-full transition-all duration-500 overflow-hidden flex flex-col mx-auto ${isFullWidthView ? 'max-w-none bg-slate-950' : 'max-w-md shadow-2xl bg-slate-950'} ${isNightMode ? 'night-mode' : ''} ${lang === 'ar' ? 'rtl' : 'ltr'}`} dir={lang === 'ar' ? 'rtl' : 'ltr'}>
-      {/* Global Controls Overlay */}
+      {/* Sync Status Badge */}
+      {isSyncing && view !== 'ar-view' && (
+        <div className="absolute top-4 right-4 z-[110] flex items-center gap-2 px-3 py-1 bg-indigo-600/20 backdrop-blur-md rounded-full border border-indigo-500/30">
+          <RefreshCw size={10} className="text-indigo-400 animate-spin" />
+          <span className="text-[8px] font-black text-indigo-400 uppercase tracking-widest">Syncing Nexus</span>
+        </div>
+      )}
+
       {view !== 'ar-view' && view !== 'journey-landing' && view !== 'dashboard' && (
         <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[100] flex flex-col gap-3 pointer-events-none">
           <div className="pointer-events-auto">

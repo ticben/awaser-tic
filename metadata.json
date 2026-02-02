@@ -1,8 +1,9 @@
 {
-  "name": "tic Awasser s4 - Urban Virtual Museum",
+  "name": "Awasser s4 - Urban Virtual Museum",
   "description": "Awasser s4 transforms the urban space into a permanent virtual museum using geolocated AR, spatial data, and digital art to bridge the gap between heritage and innovation.",
   "requestFramePermissions": [
     "camera",
+    "microphone",
     "geolocation"
   ]
 }

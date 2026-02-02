@@ -1,13 +1,22 @@
 
 import React, { useEffect, useRef, useState } from 'react';
-import { X, Sparkles, MessageSquare, Info, Volume2, Square, Loader2, Palette, Waves, Navigation, Monitor, Camera, Send, Quote, Trophy, Move, Radio, Eye, MapPin, Search, Zap, Globe, HelpCircle, ChevronRight, MousePointer2 } from 'lucide-react';
+import { X, Sparkles, MessageSquare, Info, Volume2, Square, Loader2, Palette, Waves, Navigation, Monitor, Camera, Send, Quote, Trophy, Move, Radio, Eye, MapPin, Search, Zap, Globe, HelpCircle, ChevronRight, MousePointer2, Mic, MicOff, History as TimeIcon, Play, Wand2 } from 'lucide-react';
 import { Artwork } from '../types';
-import { getCulturalInsights, askMuseumGuide, generateNarrationAudio, identifyLandmarkFromImage } from '../services/geminiService';
+import { getCulturalInsights, askMuseumGuide, generateNarrationAudio, identifyLandmarkFromImage, generateHistoricalReimagining, generateArtworkVariant } from '../services/geminiService';
+import { GoogleGenAI, LiveServerMessage, Modality, Blob as GenBlob } from '@google/genai';
 import QuizModule from './QuizModule';
 
-// Helper functions for audio decoding as per Gemini API guidelines
-// Fix for Error in file components/ARViewer.tsx on line 237: Cannot find name 'decodeBase64'.
-function decodeBase64(base64: string) {
+// Helper functions for audio encoding/decoding as per Gemini API guidelines
+function encode(bytes: Uint8Array) {
+  let binary = '';
+  const len = bytes.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+function decode(base64: string) {
   const binaryString = atob(base64);
   const len = binaryString.length;
   const bytes = new Uint8Array(len);
@@ -17,7 +26,6 @@ function decodeBase64(base64: string) {
   return bytes;
 }
 
-// Fix for Error in file components/ARViewer.tsx on line 237: Cannot find name 'decodeAudioData'.
 async function decodeAudioData(
   data: Uint8Array,
   ctx: AudioContext,
@@ -59,7 +67,6 @@ const ARViewer: React.FC<ARViewerProps> = ({ artwork, onClose }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const modelRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const chatEndRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const hiddenCanvasRef = useRef<HTMLCanvasElement>(null);
   
@@ -81,6 +88,20 @@ const ARViewer: React.FC<ARViewerProps> = ({ artwork, onClose }) => {
   const [isScanning, setIsScanning] = useState(false);
   const [foundLandmark, setFoundLandmark] = useState<any>(null);
 
+  const [timeWarpUrl, setTimeWarpUrl] = useState<string | null>(null);
+  const [isTimeWarping, setIsTimeWarping] = useState(false);
+
+  const [fluxImageUrl, setFluxImageUrl] = useState<string | null>(null);
+  const [isFluxing, setIsFluxing] = useState(false);
+
+  // Live API States
+  const [isLiveActive, setIsLiveActive] = useState(false);
+  const [liveTranscription, setLiveTranscription] = useState('');
+  const sessionPromiseRef = useRef<Promise<any> | null>(null);
+  const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
+  const nextStartTimeRef = useRef(0);
+  const frameIntervalRef = useRef<number | null>(null);
+
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const spatialNodesRef = useRef<any>(null);
@@ -95,6 +116,8 @@ const ARViewer: React.FC<ARViewerProps> = ({ artwork, onClose }) => {
     } else {
       stopCamera();
       setFoundLandmark(null);
+      stopLiveSession();
+      setFluxImageUrl(null);
     }
   }, [viewMode]);
 
@@ -120,8 +143,108 @@ const ARViewer: React.FC<ARViewerProps> = ({ artwork, onClose }) => {
       stopCamera();
       stopNarration();
       stopSpatialAudio();
+      stopLiveSession();
     };
   }, [artwork]);
+
+  // LIVE API INTEGRATION
+  const startLiveSession = async () => {
+    if (isLiveActive) {
+      stopLiveSession();
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      
+      const inputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+      const outputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+      
+      const sessionPromise = ai.live.connect({
+        model: 'gemini-2.5-flash-native-audio-preview-12-2025',
+        callbacks: {
+          onopen: () => {
+            setIsLiveActive(true);
+            const source = inputCtx.createMediaStreamSource(stream);
+            const scriptProcessor = inputCtx.createScriptProcessor(4096, 1, 1);
+            scriptProcessor.onaudioprocess = (e) => {
+              const inputData = e.inputBuffer.getChannelData(0);
+              const l = inputData.length;
+              const int16 = new Int16Array(l);
+              for (let i = 0; i < l; i++) int16[i] = inputData[i] * 32768;
+              const pcmBlob: GenBlob = { data: encode(new Uint8Array(int16.buffer)), mimeType: 'audio/pcm;rate=16000' };
+              sessionPromise.then(s => s.sendRealtimeInput({ media: pcmBlob }));
+            };
+            source.connect(scriptProcessor);
+            scriptProcessor.connect(inputCtx.destination);
+            
+            // Stream frames if in AR mode
+            if (viewMode === 'ar' && videoRef.current) {
+              frameIntervalRef.current = window.setInterval(() => {
+                const canvas = hiddenCanvasRef.current;
+                if (!canvas || !videoRef.current) return;
+                const ctx = canvas.getContext('2d');
+                canvas.width = 320;
+                canvas.height = 180;
+                ctx?.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+                const base64Data = canvas.toDataURL('image/jpeg', 0.6).split(',')[1];
+                sessionPromise.then(s => s.sendRealtimeInput({ media: { data: base64Data, mimeType: 'image/jpeg' } }));
+              }, 1000);
+            }
+          },
+          onmessage: async (message: LiveServerMessage) => {
+            if (message.serverContent?.modelTurn?.parts[0]?.inlineData?.data) {
+              const base64 = message.serverContent.modelTurn.parts[0].inlineData.data;
+              nextStartTimeRef.current = Math.max(nextStartTimeRef.current, outputCtx.currentTime);
+              const audioBuffer = await decodeAudioData(decode(base64), outputCtx, 24000, 1);
+              const source = outputCtx.createBufferSource();
+              source.buffer = audioBuffer;
+              source.connect(outputCtx.destination);
+              source.start(nextStartTimeRef.current);
+              nextStartTimeRef.current += audioBuffer.duration;
+              sourcesRef.current.add(source);
+              source.onended = () => sourcesRef.current.delete(source);
+            }
+            if (message.serverContent?.interrupted) {
+              sourcesRef.current.forEach(s => s.stop());
+              sourcesRef.current.clear();
+              nextStartTimeRef.current = 0;
+            }
+            if (message.serverContent?.outputTranscription) {
+              setLiveTranscription(prev => prev + message.serverContent!.outputTranscription!.text);
+            }
+            if (message.serverContent?.turnComplete) setLiveTranscription('');
+          },
+          onclose: () => setIsLiveActive(false),
+          onerror: (e) => console.error("Live Error:", e)
+        },
+        config: {
+          responseModalities: [Modality.AUDIO],
+          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } },
+          systemInstruction: `You are a helpful, expert museum curator for the Awasser s4 Urban Museum in Riyadh. 
+          You can see what the visitor sees via their camera. 
+          Provide cultural, historical, and artistic insights in a friendly, engaging voice.
+          Keep answers concise and informative. 
+          The visitor is looking at ${artwork?.title} by ${artwork?.artist}.`,
+          outputAudioTranscription: {}
+        }
+      });
+      sessionPromiseRef.current = sessionPromise;
+    } catch (err) {
+      console.error("Live session failed:", err);
+    }
+  };
+
+  const stopLiveSession = () => {
+    if (sessionPromiseRef.current) {
+      sessionPromiseRef.current.then(s => s.close());
+      sessionPromiseRef.current = null;
+    }
+    if (frameIntervalRef.current) clearInterval(frameIntervalRef.current);
+    setIsLiveActive(false);
+    setLiveTranscription('');
+  };
 
   const scanEnvironment = async () => {
     if (!videoRef.current || isScanning) return;
@@ -143,6 +266,41 @@ const ARViewer: React.FC<ARViewerProps> = ({ artwork, onClose }) => {
       }
     }
     setIsScanning(false);
+  };
+
+  const handleFlux = async () => {
+    if (isFluxing || !videoRef.current) return;
+    setIsFluxing(true);
+    setFluxImageUrl(null);
+    const video = videoRef.current;
+    const canvas = hiddenCanvasRef.current;
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx?.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const base64 = canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
+      const prompt = foundLandmark?.suggestedTheme || artwork?.category || "digital futurism";
+      const reimaginedUrl = await generateArtworkVariant(base64, prompt);
+      setFluxImageUrl(reimaginedUrl);
+    }
+    setIsFluxing(false);
+  };
+
+  const startTimeWarp = async () => {
+    if (isTimeWarping || !foundLandmark || !videoRef.current) return;
+    setIsTimeWarping(true);
+    const canvas = hiddenCanvasRef.current;
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      canvas.width = videoRef.current.videoWidth;
+      canvas.height = videoRef.current.videoHeight;
+      ctx?.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+      const base64 = canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
+      const videoUrl = await generateHistoricalReimagining(base64, foundLandmark.landmark);
+      setTimeWarpUrl(videoUrl);
+    }
+    setIsTimeWarping(false);
   };
 
   const startSpatialAudio = () => {
@@ -245,10 +403,10 @@ const ARViewer: React.FC<ARViewerProps> = ({ artwork, onClose }) => {
 
   const handleDragEnd = () => setIsDragging(false);
 
-  const handleAsk = async (e?: React.FormEvent, questionOverride?: string) => {
+  const handleAsk = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    const q = questionOverride || chatQuestion;
-    if (!q.trim()) return;
+    if (!chatQuestion.trim()) return;
+    const q = chatQuestion;
     setChatQuestion('');
     setIsChatLoading(true);
     setChatResponse(null);
@@ -266,7 +424,7 @@ const ARViewer: React.FC<ARViewerProps> = ({ artwork, onClose }) => {
     try {
       if (!audioContextRef.current) audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       const ctx = audioContextRef.current;
-      const audioBuffer = await decodeAudioData(decodeBase64(base64Audio), ctx, 24000, 1);
+      const audioBuffer = await decodeAudioData(decode(base64Audio), ctx, 24000, 1);
       const source = ctx.createBufferSource();
       source.buffer = audioBuffer;
       source.connect(ctx.destination);
@@ -292,6 +450,7 @@ const ARViewer: React.FC<ARViewerProps> = ({ artwork, onClose }) => {
           </div>
         )}
         
+        {/* Spatial Interaction Overlay */}
         <div 
           ref={containerRef}
           onMouseDown={handleDragStart} onMouseMove={handleDragMove} onMouseUp={handleDragEnd}
@@ -299,7 +458,13 @@ const ARViewer: React.FC<ARViewerProps> = ({ artwork, onClose }) => {
           className="absolute inset-0 flex items-center justify-center z-[4] pointer-events-auto"
         >
           <div className="relative transition-transform duration-75 ease-out flex items-center justify-center" style={{ transform: viewMode === 'ar' ? `rotateY(${mouseRotation}deg)` : 'none' }}>
-            {artwork?.modelUrl ? (
+            {fluxImageUrl ? (
+               <div className="relative group max-w-[90vw] max-h-[70vh] animate-in zoom-in duration-700">
+                  <img src={fluxImageUrl} className="rounded-2xl shadow-[0_0_50px_rgba(99,102,241,0.5)] border border-indigo-500/30" alt="Fluxed Art" />
+                  <div className="absolute top-4 right-4 p-2 bg-indigo-600 rounded-lg text-white animate-pulse"><Sparkles size={16} /></div>
+                  <button onClick={() => setFluxImageUrl(null)} className="absolute -top-4 -right-4 p-3 bg-red-600 rounded-full text-white shadow-xl"><X size={20} /></button>
+               </div>
+            ) : artwork?.modelUrl ? (
               <div className="w-[80vw] h-[60vh]">
                 <ModelViewer ref={modelRef} src={artwork.modelUrl} auto-rotate camera-controls className="w-full h-full" environment-image="neutral" shadow-intensity="1" />
               </div>
@@ -312,7 +477,29 @@ const ARViewer: React.FC<ARViewerProps> = ({ artwork, onClose }) => {
           </div>
         </div>
 
-        {viewMode === 'ar' && foundLandmark && (
+        {/* Veo Time Warp Overlay */}
+        {timeWarpUrl && (
+          <div className="absolute inset-0 z-[100] bg-black/95 flex items-center justify-center p-4">
+             <div className="relative w-full max-w-lg aspect-[9/16] glass-morphism rounded-[48px] overflow-hidden border border-white/10 shadow-2xl">
+                <video src={timeWarpUrl} autoPlay loop className="w-full h-full object-cover" />
+                <div className="absolute top-8 left-8 right-8 flex justify-between items-center">
+                   <div className="flex items-center gap-3">
+                      <div className="p-3 bg-fuchsia-600 rounded-2xl text-white shadow-lg"><TimeIcon size={20} /></div>
+                      <div>
+                         <h4 className="text-white font-black text-sm uppercase">Historical Sync</h4>
+                         <p className="text-[10px] text-fuchsia-300 font-bold uppercase tracking-widest">Reconstructed Era</p>
+                      </div>
+                   </div>
+                   <button onClick={() => setTimeWarpUrl(null)} className="p-3 bg-black/40 backdrop-blur-md rounded-full text-white"><X size={20} /></button>
+                </div>
+                <div className="absolute bottom-8 left-8 right-8 p-6 glass-morphism rounded-[30px] border border-white/10">
+                   <p className="text-xs text-white/90 leading-relaxed italic">"Witnessing the layers of time at {foundLandmark?.landmark}. This visualization represents the documented historical structure."</p>
+                </div>
+             </div>
+          </div>
+        )}
+
+        {viewMode === 'ar' && foundLandmark && !timeWarpUrl && (
           <div className="absolute inset-0 z-10 pointer-events-none flex items-center justify-center">
              <div className="animate-in zoom-in fade-in duration-500 glass-morphism p-8 rounded-[40px] border-2 border-indigo-500/30 max-w-xs shadow-[0_0_40px_rgba(99,102,241,0.2)] pointer-events-auto relative">
                 <button onClick={() => setFoundLandmark(null)} className="absolute -top-3 -right-3 p-2 bg-indigo-600 rounded-full text-white shadow-lg"><X size={16} /></button>
@@ -324,7 +511,27 @@ const ARViewer: React.FC<ARViewerProps> = ({ artwork, onClose }) => {
                   </div>
                 </div>
                 <p className="text-xs text-slate-300 leading-relaxed mb-6 font-medium">{foundLandmark.history}</p>
-                <div className="pt-6 border-t border-white/5">
+                
+                <div className="space-y-3">
+                   <button 
+                    onClick={startTimeWarp}
+                    disabled={isTimeWarping}
+                    className="w-full py-4 bg-gradient-to-r from-fuchsia-600 to-indigo-600 rounded-2xl text-white text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 shadow-lg disabled:opacity-50 transition-all"
+                  >
+                    {isTimeWarping ? <Loader2 className="animate-spin" size={16} /> : <TimeIcon size={16} />}
+                    Enter Time Warp
+                  </button>
+                  <button 
+                    onClick={handleFlux}
+                    disabled={isFluxing}
+                    className="w-full py-4 bg-white/5 border border-indigo-500/30 rounded-2xl text-indigo-400 text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-indigo-600 hover:text-white transition-all disabled:opacity-50"
+                  >
+                    {isFluxing ? <Loader2 className="animate-spin" size={16} /> : <Wand2 size={16} />}
+                    Initiate Digital Flux
+                  </button>
+                </div>
+
+                <div className="pt-4 border-t border-white/5 mt-4">
                   <p className="text-[9px] text-slate-500 font-black uppercase tracking-widest mb-2">Suggested Art Theme</p>
                   <div className="flex items-center gap-2 text-indigo-400 text-xs font-bold">
                     <Sparkles size={14} /> {foundLandmark.suggestedTheme}
@@ -335,6 +542,7 @@ const ARViewer: React.FC<ARViewerProps> = ({ artwork, onClose }) => {
         )}
       </div>
 
+      {/* TOP CONTROLS */}
       <div className="relative z-50 flex justify-between items-start p-8 pt-16 pointer-events-none">
         <div className="flex gap-4 pointer-events-auto">
           <button onClick={onClose} className="p-4 bg-black/40 backdrop-blur-xl rounded-full text-white border border-white/10 hover:bg-white/10 transition-all"><X size={24} /></button>
@@ -349,12 +557,21 @@ const ARViewer: React.FC<ARViewerProps> = ({ artwork, onClose }) => {
         </div>
 
         <div className="flex gap-4 pointer-events-auto">
+          {/* Live Guide Button */}
+          <button 
+            onClick={startLiveSession}
+            className={`p-4 rounded-full text-white backdrop-blur-xl border border-white/10 transition-all ${isLiveActive ? 'bg-red-600 animate-pulse shadow-[0_0_20px_rgba(220,38,38,0.5)]' : 'bg-black/40'}`}
+          >
+            {isLiveActive ? <Mic size={24} /> : <MicOff size={24} />}
+          </button>
+          
           <button 
             onClick={() => setShowTutorial(true)} 
             className="p-4 bg-black/40 backdrop-blur-xl rounded-full text-white border border-white/10 hover:bg-indigo-600/50 transition-all"
           >
             <HelpCircle size={24} />
           </button>
+          
           {viewMode === 'ar' && (
             <button 
               onClick={scanEnvironment} 
@@ -375,9 +592,32 @@ const ARViewer: React.FC<ARViewerProps> = ({ artwork, onClose }) => {
         </div>
       </div>
 
+      {/* BOTTOM HUD */}
       <div className="relative z-50 p-8 pb-12 mt-auto pointer-events-none">
         <div className="max-w-xl mx-auto w-full pointer-events-auto">
-          {!showQuiz && !showTutorial && (
+          
+          {/* Live Transcription Bar */}
+          {isLiveActive && liveTranscription && (
+            <div className="mb-6 animate-in slide-in-from-bottom-4 bg-black/60 backdrop-blur-2xl rounded-3xl p-6 border border-white/10 shadow-2xl">
+              <div className="flex items-center gap-3 mb-3">
+                 <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                 <span className="text-[10px] font-black text-white uppercase tracking-[0.2em]">Curator Live Response</span>
+              </div>
+              <p className="text-sm text-indigo-200 leading-relaxed italic font-medium">"{liveTranscription}"</p>
+            </div>
+          )}
+
+          {isFluxing && (
+             <div className="mb-6 animate-in slide-in-from-bottom-4 bg-indigo-900/60 backdrop-blur-2xl rounded-3xl p-8 border border-indigo-500/30 flex items-center gap-6">
+                <Loader2 className="animate-spin text-white" size={32} />
+                <div>
+                   <h4 className="text-white font-black text-sm uppercase tracking-widest">Initiating Digital Flux</h4>
+                   <p className="text-xs text-indigo-200">Reimagining urban geometry with generative synthesis...</p>
+                </div>
+             </div>
+          )}
+
+          {!showQuiz && !showTutorial && !isFluxing && (
             <div className="glass-morphism rounded-[40px] p-8 border border-white/10 shadow-2xl space-y-6">
               {artwork?.category === 'Soundscape' && isSpatialAudioActive && (
                 <div className="space-y-4 animate-in slide-in-from-bottom-2">
@@ -409,7 +649,7 @@ const ARViewer: React.FC<ARViewerProps> = ({ artwork, onClose }) => {
                 </div>
               </div>
 
-              <p className="text-sm text-slate-300 leading-relaxed pl-8 italic border-l-2 border-indigo-500/20">{insight}</p>
+              {!isLiveActive && <p className="text-sm text-slate-300 leading-relaxed pl-8 italic border-l-2 border-indigo-500/20">{insight}</p>}
 
               <div className="flex gap-4">
                 <button onClick={() => setShowChat(true)} className="flex-1 py-4 bg-indigo-600 rounded-2xl text-white text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-indigo-500 active:scale-95 transition-all shadow-xl shadow-indigo-600/20">
@@ -438,26 +678,26 @@ const ARViewer: React.FC<ARViewerProps> = ({ artwork, onClose }) => {
 
             <div className="space-y-6">
                <div className="flex items-start gap-5">
-                 <div className="p-3 bg-white/5 rounded-2xl text-indigo-400 border border-white/5"><MousePointer2 size={18} /></div>
+                 <div className="p-3 bg-white/5 rounded-2xl text-indigo-400 border border-white/5"><Mic size={18} /></div>
                  <div>
-                   <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-1">Spatial Orbit</h4>
-                   <p className="text-[10px] text-slate-500 leading-relaxed">Drag anywhere to rotate the artifact and inspect digital details.</p>
+                   <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-1">Live AI Guide</h4>
+                   <p className="text-[10px] text-slate-500 leading-relaxed">Toggle the mic to speak directly with our expert curator in real-time.</p>
                  </div>
                </div>
                
                <div className="flex items-start gap-5">
-                 <div className="p-3 bg-white/5 rounded-2xl text-indigo-400 border border-white/5"><Zap size={18} /></div>
+                 <div className="p-3 bg-white/5 rounded-2xl text-indigo-400 border border-white/5"><Wand2 size={18} /></div>
                  <div>
-                   <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-1">Urban Scan</h4>
-                   <p className="text-[10px] text-slate-500 leading-relaxed">In AR Mode, use the scan button to identify local landmarks around you.</p>
+                   <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-1">Digital Flux</h4>
+                   <p className="text-[10px] text-slate-500 leading-relaxed">Artistically reimagine any urban site with our Flux synthesis engine.</p>
                  </div>
                </div>
 
                <div className="flex items-start gap-5">
-                 <div className="p-3 bg-white/5 rounded-2xl text-indigo-400 border border-white/5"><MessageSquare size={18} /></div>
+                 <div className="p-3 bg-white/5 rounded-2xl text-indigo-400 border border-white/5"><TimeIcon size={18} /></div>
                  <div>
-                   <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-1">AI Mediator</h4>
-                   <p className="text-[10px] text-slate-500 leading-relaxed">Tap Tour Guide for contextual insights and a deep dive into the art.</p>
+                   <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-1">Time Warp</h4>
+                   <p className="text-[10px] text-slate-500 leading-relaxed">Scan landmarks to unlock cinematic historical reconstructions.</p>
                  </div>
                </div>
             </div>

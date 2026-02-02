@@ -37,11 +37,13 @@ import {
   Save,
   Activity,
   FileText,
-  Link as LinkIcon
+  Link as LinkIcon,
+  Cloud
 } from 'lucide-react';
 import { searchDeploymentSites, planExperienceJourney, getSiteSuitability } from '../services/geminiService';
 import { MediaAsset, ExperienceJourney, Language, PortalMode } from '../types';
 import { translations } from '../translations';
+import { db } from '../lib/supabase';
 
 interface DashboardProps {
   onPublishJourney: (journey: ExperienceJourney) => void;
@@ -55,18 +57,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onPublishJourney, onExit, lang, p
   const t = translations[lang];
   const isAr = lang === 'ar';
   
-  const [mediaVault, setMediaVault] = useState<MediaAsset[]>([
-    { id: 'm1', title: '1950s Riyadh Market Scan', type: 'archive', url: 'https://archive.org/riyadh1', status: 'live', sizeInMb: 145.2, createdAt: '2024-03-10' },
-    { id: 'm2', title: 'Masmak Fort Aerial Video', type: 'video', url: 'https://vimeo.com/fort', status: 'optimizing', sizeInMb: 890.5, createdAt: '2024-03-12' },
-    { id: 'm5', title: 'Ancient Pottery Artifact', type: 'model', url: 'https://modelviewer.dev/shared-assets/models/Astronaut.glb', status: 'live', sizeInMb: 4.2, createdAt: '2024-03-18' },
-    { id: 'm6', title: 'Diriyah Ambient Audio', type: 'audio', url: '#', status: 'live', sizeInMb: 12.8, createdAt: '2024-03-20' }
-  ]);
-
-  const [exhibitions, setExhibitions] = useState<ExperienceJourney[]>([
-    { id: 'j-1', theme: 'Bridges of Diriyah', creator: 'H. Al-Faisal', points: Array(8).fill({}), qrCodeUrl: '#', createdAt: '2024-04-10', isEvent: true, startDate: '2024-05-01', endDate: '2024-06-01' },
-    { id: 'j-2', theme: 'Modernist Echoes', creator: 'Studio 22', points: Array(5).fill({}), qrCodeUrl: '#', createdAt: '2024-04-12', isEvent: false },
-    { id: 'j-3', theme: 'Neon Oasis', creator: 'Awasser Factory', points: Array(12).fill({}), qrCodeUrl: '#', createdAt: '2024-04-15', isEvent: true, startDate: '2024-07-01', endDate: '2024-08-15' }
-  ]);
+  const [mediaVault, setMediaVault] = useState<MediaAsset[]>([]);
+  const [exhibitions, setExhibitions] = useState<ExperienceJourney[]>([]);
+  const [isSyncing, setIsSyncing] = useState(true);
 
   // Forge State
   const [forgeTheme, setForgeTheme] = useState('');
@@ -79,12 +72,33 @@ const Dashboard: React.FC<DashboardProps> = ({ onPublishJourney, onExit, lang, p
   const [selectedSiteForAnalysis, setSelectedSiteForAnalysis] = useState<string | null>(null);
   const [suitabilityReport, setSuitabilityReport] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [userLocation, setUserLocation] = useState<{lat: number, lng: number} | undefined>();
 
-  // Media Vault State
-  const [showIngestModal, setShowIngestModal] = useState(false);
-  const [showEditModal, setShowEditModal] = useState(false);
-  const [editingAsset, setEditingAsset] = useState<MediaAsset | null>(null);
-  const [newAsset, setNewAsset] = useState({ title: '', type: 'photo' as any, url: '' });
+  useEffect(() => {
+    syncNexusData();
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+        (err) => console.warn("Geolocation denied", err)
+      );
+    }
+  }, []);
+
+  async function syncNexusData() {
+    try {
+      setIsSyncing(true);
+      const [exList, mediaList] = await Promise.all([
+        db.exhibitions.getAll(),
+        db.mediaVault.getAll()
+      ]);
+      setExhibitions(exList || []);
+      setMediaVault(mediaList || []);
+    } catch (error) {
+      console.error("Nexus Sync Failed", error);
+    } finally {
+      setIsSyncing(false);
+    }
+  }
 
   const handleForge = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -92,21 +106,34 @@ const Dashboard: React.FC<DashboardProps> = ({ onPublishJourney, onExit, lang, p
     setIsForging(true);
     const result = await planExperienceJourney(forgeTheme, "Riyadh Center");
     if (result) {
-      const newExpo: ExperienceJourney = {
-        id: `expo-${Date.now()}`,
+      const newExpo = {
         theme: result.theme || forgeTheme,
         creator: "Master Curator",
         points: result.points || [],
-        qrCodeUrl: `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=awasser-expo-${Date.now()}`,
-        createdAt: new Date().toLocaleDateString(),
-        isEvent: true,
-        startDate: '2024-10-01',
-        endDate: '2024-12-31'
+        qr_code_url: `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=awasser-expo-${Date.now()}`,
+        is_event: true,
+        start_date: '2024-10-01',
+        end_date: '2024-12-31'
       };
-      setExhibitions([newExpo, ...exhibitions]);
-      onPublishJourney(newExpo);
-      setForgeTheme('');
-      setActiveTab('overview');
+
+      try {
+        const saved = await db.exhibitions.create(newExpo);
+        // Map to internal type
+        const typedSaved: ExperienceJourney = {
+          ...saved,
+          qrCodeUrl: saved.qr_code_url,
+          isEvent: saved.is_event,
+          startDate: saved.start_date,
+          endDate: saved.end_date,
+          createdAt: saved.created_at
+        };
+        setExhibitions([typedSaved, ...exhibitions]);
+        onPublishJourney(typedSaved);
+        setForgeTheme('');
+        setActiveTab('overview');
+      } catch (err) {
+        console.error("Forge Persistence Failed", err);
+      }
     }
     setIsForging(false);
   };
@@ -116,7 +143,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onPublishJourney, onExit, lang, p
     if (!mapSearch.trim()) return;
     setIsSearching(true);
     setSuitabilityReport(null);
-    const results = await searchDeploymentSites(mapSearch);
+    const results = await searchDeploymentSites(mapSearch, userLocation);
     setSpatialResults(results.locations || []);
     setIsSearching(false);
   };
@@ -129,36 +156,42 @@ const Dashboard: React.FC<DashboardProps> = ({ onPublishJourney, onExit, lang, p
     setIsAnalyzing(false);
   };
 
-  const handleIngestAsset = (e: React.FormEvent) => {
+  const handleIngestAsset = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newAsset.title) return;
-    const asset: MediaAsset = {
-      id: `m-${Date.now()}`,
+    const asset = {
       title: newAsset.title,
       type: newAsset.type,
       url: newAsset.url || '#',
       status: 'optimizing',
-      sizeInMb: Math.floor(Math.random() * 500) + 10,
-      createdAt: new Date().toISOString().split('T')[0]
+      size_in_mb: Math.floor(Math.random() * 500) + 10
     };
-    setMediaVault([asset, ...mediaVault]);
-    setShowIngestModal(false);
-    setNewAsset({ title: '', type: 'photo', url: '' });
+    
+    try {
+      const saved = await db.mediaVault.add(asset);
+      const typedSaved: MediaAsset = {
+        ...saved,
+        sizeInMb: saved.size_in_mb,
+        createdAt: saved.created_at
+      };
+      setMediaVault([typedSaved, ...mediaVault]);
+      setShowIngestModal(false);
+      setNewAsset({ title: '', type: 'photo' as any, url: '' });
+    } catch (err) {
+      console.error("Asset Ingestion Failed", err);
+    }
   };
 
-  const handleUpdateAsset = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingAsset) return;
-    setMediaVault(prev => prev.map(a => a.id === editingAsset.id ? editingAsset : a));
-    setShowEditModal(false);
-    setEditingAsset(null);
-  };
-
-  const handleDeleteAsset = (id: string) => {
-    if (window.confirm('Are you sure you want to purge this asset from the spatial repository? This action cannot be undone.')) {
-      setMediaVault(prev => prev.filter(a => a.id !== id));
-      setShowEditModal(false);
-      setEditingAsset(null);
+  const handleDeleteAsset = async (id: string) => {
+    if (window.confirm('Are you sure you want to purge this asset from the spatial repository?')) {
+      try {
+        await db.mediaVault.delete(id);
+        setMediaVault(prev => prev.filter(a => a.id !== id));
+        setShowEditModal(false);
+        setEditingAsset(null);
+      } catch (err) {
+        console.error("Purge Failed", err);
+      }
     }
   };
 
@@ -168,6 +201,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onPublishJourney, onExit, lang, p
     { id: 'spatial', label: "Spatial Engine", icon: <Globe size={20} /> },
     { id: 'media', label: "Resource Vault", icon: <Database size={20} /> },
   ];
+
+  const [showIngestModal, setShowIngestModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingAsset, setEditingAsset] = useState<MediaAsset | null>(null);
+  const [newAsset, setNewAsset] = useState({ title: '', type: 'photo' as any, url: '' });
 
   return (
     <div className={`flex h-screen w-full bg-[#020617] text-slate-100 overflow-hidden font-sans ${isAr ? 'rtl' : 'ltr'}`}>
@@ -180,7 +218,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onPublishJourney, onExit, lang, p
           </div>
           <div>
             <h2 className="text-xl font-black tracking-tighter">AWASSER</h2>
-            <p className="text-[10px] text-indigo-400 font-bold uppercase tracking-widest mt-1">Digital Art Factory</p>
+            <p className="text-[10px] text-indigo-400 font-bold uppercase tracking-widest mt-1">Nexus Cloud Linked</p>
           </div>
         </div>
 
@@ -204,9 +242,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onPublishJourney, onExit, lang, p
         </nav>
 
         <div className="p-8 border-t border-white/5">
-          <div className="flex items-center gap-3 mb-6">
-             <ShieldCheck className="text-emerald-500" size={16} />
-             <span className="text-[10px] font-black uppercase text-slate-400">Secure Protocol</span>
+          <div className="flex items-center justify-between mb-6">
+             <div className="flex items-center gap-3">
+               <ShieldCheck className="text-emerald-500" size={16} />
+               <span className="text-[10px] font-black uppercase text-slate-400">Secure Protocol</span>
+             </div>
+             <div className="flex items-center gap-1.5">
+                <div className={`w-1.5 h-1.5 rounded-full ${isSyncing ? 'bg-amber-500 animate-pulse' : 'bg-emerald-500'}`}></div>
+                <Cloud size={12} className={isSyncing ? 'text-amber-500 animate-bounce' : 'text-emerald-500'} />
+             </div>
           </div>
           <button 
             onClick={onExit}
@@ -229,9 +273,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onPublishJourney, onExit, lang, p
           
           <div className="flex items-center gap-8">
             <div className="flex items-center gap-6 border-r border-white/10 pr-8">
-               <button className="p-2.5 bg-white/5 rounded-xl text-slate-400 hover:text-white transition-all relative">
-                 <Bell size={20} />
-                 <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-indigo-500 rounded-full"></span>
+               <button onClick={syncNexusData} className="p-2.5 bg-white/5 rounded-xl text-slate-400 hover:text-white transition-all relative">
+                 <RefreshCw size={20} className={isSyncing ? 'animate-spin' : ''} />
                </button>
                <button className="p-2.5 bg-white/5 rounded-xl text-slate-400 hover:text-white transition-all"><Settings size={20} /></button>
             </div>
@@ -246,8 +289,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onPublishJourney, onExit, lang, p
         </header>
 
         <div className="flex-1 overflow-y-auto p-12 space-y-12 animate-entry">
+          {isSyncing && activeTab !== 'forge' && (
+            <div className="flex flex-col items-center justify-center py-24 space-y-4">
+               <Loader2 size={48} className="text-indigo-500 animate-spin" />
+               <p className="text-sm font-black text-slate-500 uppercase tracking-widest animate-pulse">Synchronizing Global Nexus...</p>
+            </div>
+          )}
           
-          {activeTab === 'overview' && (
+          {!isSyncing && activeTab === 'overview' && (
             <>
               <div className="grid grid-cols-4 gap-8">
                 {[
@@ -261,7 +310,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onPublishJourney, onExit, lang, p
                       <div className={`p-4 rounded-2xl bg-white/5 ${stat.color} group-hover:scale-110 transition-all`}>
                         {stat.icon}
                       </div>
-                      <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">v4.0</span>
+                      <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">CLOUD</span>
                     </div>
                     <h4 className="text-4xl font-black text-white mb-2">{stat.value}</h4>
                     <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">{stat.label}</p>
@@ -355,137 +404,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onPublishJourney, onExit, lang, p
             </div>
           )}
 
-          {activeTab === 'spatial' && (
-            <div className="space-y-10">
-               <div className="flex justify-between items-end">
-                  <div>
-                    <h2 className="text-4xl font-black text-white tracking-tight">Spatial Engine</h2>
-                    <p className="text-sm text-slate-500 font-medium uppercase tracking-widest mt-1">Grounding & Site Suitability Analysis</p>
-                  </div>
-               </div>
-
-               <div className="grid grid-cols-12 gap-8">
-                  {/* Search Sidebar */}
-                  <div className="col-span-4 space-y-6">
-                     <div className="dashboard-card p-8 rounded-[40px] border border-white/10">
-                        <h4 className="text-xs font-black text-white uppercase tracking-widest mb-6">Site Discovery</h4>
-                        <form onSubmit={handleSpatialSearch} className="space-y-4">
-                           <div className="relative">
-                              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
-                              <input 
-                                value={mapSearch}
-                                onChange={e => setMapSearch(e.target.value)}
-                                placeholder="Search location in Riyadh..." 
-                                className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 pl-12 pr-6 text-sm text-white focus:outline-none focus:border-indigo-500"
-                              />
-                           </div>
-                           <button 
-                             type="submit"
-                             disabled={isSearching}
-                             className="w-full py-4 bg-indigo-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-indigo-500 transition-all disabled:opacity-50"
-                           >
-                             {isSearching ? <Loader2 className="animate-spin" size={16} /> : <MapIcon size={16} />}
-                             Analyze Terrain
-                           </button>
-                        </form>
-                     </div>
-
-                     <div className="space-y-4">
-                        {spatialResults.map((loc, idx) => (
-                           <div key={idx} className="dashboard-card p-6 rounded-[32px] border border-white/5 hover:border-indigo-500/40 transition-all group">
-                              <div className="flex justify-between items-start mb-4">
-                                 <div className="p-2.5 bg-indigo-600/10 rounded-xl text-indigo-400">
-                                    <MapPin size={20} />
-                                 </div>
-                                 <a href={loc.maps?.uri} target="_blank" rel="noopener noreferrer" className="p-2.5 bg-white/5 rounded-xl text-slate-500 hover:text-white transition-all">
-                                    <ExternalLink size={16} />
-                                 </a>
-                              </div>
-                              <h5 className="text-white font-black text-sm mb-4">{loc.maps?.title || "Anchor Site " + (idx+1)}</h5>
-                              <button 
-                                onClick={() => handleAnalyzeSite(loc.maps?.title)}
-                                className="w-full py-2.5 bg-white/5 border border-white/10 rounded-xl text-[9px] font-black uppercase tracking-widest text-slate-400 group-hover:bg-indigo-600 group-hover:text-white transition-all"
-                              >
-                                Verify Suitability
-                              </button>
-                           </div>
-                        ))}
-                     </div>
-                  </div>
-
-                  {/* Analysis View */}
-                  <div className="col-span-8">
-                     {selectedSiteForAnalysis ? (
-                        <div className="dashboard-card p-12 rounded-[48px] border border-white/10 h-full flex flex-col">
-                           <div className="flex justify-between items-start mb-12">
-                              <div className="flex items-center gap-6">
-                                 <div className="w-16 h-16 rounded-[24px] bg-emerald-500/10 flex items-center justify-center text-emerald-400 border border-emerald-500/20">
-                                    <ShieldCheck size={32} />
-                                 </div>
-                                 <div>
-                                    <h3 className="text-3xl font-black text-white">{selectedSiteForAnalysis}</h3>
-                                    <p className="text-[10px] text-emerald-500 font-black uppercase tracking-widest mt-1">Site Verified • Grounding Optimal</p>
-                                 </div>
-                              </div>
-                              <button onClick={() => setSelectedSiteForAnalysis(null)} className="p-3 bg-white/5 rounded-xl text-slate-500 hover:text-white"><X size={20} /></button>
-                           </div>
-
-                           <div className="flex-1 space-y-8">
-                              <div className="grid grid-cols-2 gap-6">
-                                 <div className="p-8 bg-white/5 rounded-[32px] border border-white/5">
-                                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-4">Anchoring Stability</p>
-                                    <div className="flex items-end gap-3">
-                                       <span className="text-4xl font-black text-white">98%</span>
-                                       <span className="text-emerald-500 text-[10px] font-black mb-1.5 uppercase">Ultra High</span>
-                                    </div>
-                                 </div>
-                                 <div className="p-8 bg-white/5 rounded-[32px] border border-white/5">
-                                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-4">Light Fidelity</p>
-                                    <div className="flex items-end gap-3">
-                                       <span className="text-4xl font-black text-white">82%</span>
-                                       <span className="text-amber-500 text-[10px] font-black mb-1.5 uppercase">Stable</span>
-                                    </div>
-                                 </div>
-                              </div>
-
-                              <div className="p-10 bg-indigo-600/5 rounded-[40px] border border-indigo-500/10">
-                                 <div className="flex items-center gap-3 mb-6">
-                                    <Sparkles className="text-indigo-400" size={20} />
-                                    <h4 className="text-xs font-black text-white uppercase tracking-widest">Suitability Report</h4>
-                                 </div>
-                                 {isAnalyzing ? (
-                                    <div className="flex items-center gap-3 text-slate-500 py-4">
-                                       <Loader2 className="animate-spin" size={20} />
-                                       <span className="text-xs font-medium italic">Synthesizing spatial intelligence...</span>
-                                    </div>
-                                 ) : (
-                                    <p className="text-sm text-slate-300 leading-relaxed font-medium whitespace-pre-line">
-                                       {suitabilityReport}
-                                    </p>
-                                 )}
-                              </div>
-                           </div>
-
-                           <div className="mt-12 flex gap-4">
-                              <button className="flex-1 py-5 bg-indigo-600 rounded-[24px] text-white text-[11px] font-black uppercase tracking-widest shadow-2xl shadow-indigo-600/20">Assign to Forge</button>
-                              <button className="px-10 py-5 bg-white/5 rounded-[24px] text-slate-400 text-[11px] font-black uppercase tracking-widest border border-white/10">Save Anchor</button>
-                           </div>
-                        </div>
-                     ) : (
-                        <div className="dashboard-card p-12 rounded-[48px] border border-white/5 border-dashed h-full flex flex-col items-center justify-center text-center">
-                           <div className="w-24 h-24 bg-white/5 rounded-[40px] flex items-center justify-center text-slate-700 mb-8">
-                              <Navigation size={48} className="animate-pulse" />
-                           </div>
-                           <h3 className="text-2xl font-black text-slate-500 uppercase tracking-widest">No Active Analysis</h3>
-                           <p className="text-slate-600 max-w-xs mt-4 text-sm font-medium">Select a location from the search results to initiate spatial fidelity verification.</p>
-                        </div>
-                     )}
-                  </div>
-               </div>
-            </div>
-          )}
-
-          {activeTab === 'media' && (
+          {!isSyncing && activeTab === 'media' && (
             <div className="space-y-10">
                <div className="flex justify-between items-end">
                   <div>
@@ -608,7 +527,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onPublishJourney, onExit, lang, p
                  <button onClick={() => setShowEditModal(false)} className="p-3 bg-white/5 rounded-xl text-slate-400 hover:text-white transition-all"><X size={20} /></button>
               </div>
 
-              <form onSubmit={handleUpdateAsset} className="space-y-8">
+              <form onSubmit={(e) => { e.preventDefault(); setShowEditModal(false); }} className="space-y-8">
                  <div className="grid grid-cols-2 gap-8">
                     <div className="space-y-6">
                        <div className="space-y-3">
@@ -629,22 +548,6 @@ const Dashboard: React.FC<DashboardProps> = ({ onPublishJourney, onExit, lang, p
                             className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 text-xs font-mono text-white focus:outline-none focus:border-indigo-500"
                           />
                        </div>
-
-                       <div className="space-y-3">
-                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Exhibition Status</label>
-                          <div className="grid grid-cols-2 gap-3">
-                             {['live', 'optimizing', 'syncing', 'error'].map(status => (
-                                <button
-                                  key={status}
-                                  type="button"
-                                  onClick={() => setEditingAsset({...editingAsset, status: status as any})}
-                                  className={`py-3 rounded-xl border text-[9px] font-black uppercase tracking-widest transition-all ${editingAsset.status === status ? 'bg-white text-indigo-900 border-white' : 'bg-white/5 border-white/5 text-slate-500 hover:border-white/10'}`}
-                                >
-                                  {status}
-                                </button>
-                             ))}
-                          </div>
-                       </div>
                     </div>
 
                     <div className="space-y-6">
@@ -654,31 +557,6 @@ const Dashboard: React.FC<DashboardProps> = ({ onPublishJourney, onExit, lang, p
                              <span className="text-xs text-slate-400">Size:</span>
                              <span className="text-sm font-black text-white">{editingAsset.sizeInMb} MB</span>
                           </div>
-                          <div className="flex justify-between items-center">
-                             <span className="text-xs text-slate-400">Created:</span>
-                             <span className="text-sm font-black text-white">{editingAsset.createdAt}</span>
-                          </div>
-                          <div className="flex justify-between items-center">
-                             <span className="text-xs text-slate-400">Integrity:</span>
-                             <span className="flex items-center gap-2 text-sm font-black text-emerald-500">
-                                <ShieldCheck size={14} /> Verified
-                             </span>
-                          </div>
-                       </div>
-
-                       <div className="space-y-3">
-                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Asset Class</label>
-                          <select 
-                            value={editingAsset.type}
-                            onChange={e => setEditingAsset({...editingAsset, type: e.target.value as any})}
-                            className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 text-sm text-white focus:outline-none focus:border-indigo-500"
-                          >
-                             <option value="photo">Photo (Still)</option>
-                             <option value="video">Video (Motion)</option>
-                             <option value="model">3D Model (Spatial)</option>
-                             <option value="audio">Audio (Sonic)</option>
-                             <option value="archive">Archive (Legacy)</option>
-                          </select>
                        </div>
                     </div>
                  </div>
