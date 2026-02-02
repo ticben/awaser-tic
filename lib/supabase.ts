@@ -37,6 +37,8 @@ export const db = {
         .from('exhibitions')
         .insert([{
           theme: journey.theme,
+          city: journey.city,
+          organization: journey.organization,
           creator: journey.creator,
           points: journey.points,
           qr_code_url: journey.qr_code_url,

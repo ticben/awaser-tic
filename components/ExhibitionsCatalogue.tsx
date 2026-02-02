@@ -15,6 +15,8 @@ const MOCK_EXHIBITIONS: ExperienceJourney[] = [
   {
     id: 'e1',
     theme: 'Desert Neons: 2030',
+    city: 'Riyadh',
+    organization: 'Awasser Studio',
     creator: 'Dr. Noura Al-Saud',
     points: [],
     qrCodeUrl: '#',
@@ -27,6 +29,8 @@ const MOCK_EXHIBITIONS: ExperienceJourney[] = [
   {
     id: 'e2',
     theme: 'Murals of Masmak',
+    city: 'Riyadh',
+    organization: 'Heritage Authority',
     creator: 'Historical Society',
     points: [],
     qrCodeUrl: '#',

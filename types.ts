@@ -53,13 +53,18 @@ export interface POI {
     lat: number;
     lng: number;
     name: string;
+    city: string;
   };
   narrativeInsight: string;
+  anchoredAssetId?: string;
+  displayMode: 'ar' | 'studio' | 'hybrid' | 'text';
 }
 
 export interface ExperienceJourney {
   id: string;
   theme: string;
+  city: string;
+  organization: string;
   creator: string;
   points: POI[];
   qrCodeUrl: string;
