@@ -47,9 +47,6 @@ export interface Artwork {
   isTimedEvent?: boolean;
 }
 
-/**
- * Fixed: Added HeritageSite interface
- */
 export interface HeritageSite {
   id: string;
   name: string;
@@ -57,13 +54,12 @@ export interface HeritageSite {
   location: { lat: number; lng: number };
 }
 
-/**
- * Fixed: Added ExperienceJourney interface
- */
 export interface ExperienceJourney {
   id: string;
   theme: string;
   city: string;
+  country: string; // Added for global scale
+  center?: { lat: number; lng: number }; // Added for dynamic map centering
   organization: string;
   creator: string;
   points: POI[];
@@ -75,9 +71,6 @@ export interface ExperienceJourney {
   coverImage?: string;
 }
 
-/**
- * Fixed: Added UserStats interface
- */
 export interface UserStats {
   level: number;
   xp: number;
@@ -92,9 +85,6 @@ export interface UserStats {
   }>;
 }
 
-/**
- * Fixed: Added QuizQuestion interface
- */
 export interface QuizQuestion {
   question: string;
   options: string[];

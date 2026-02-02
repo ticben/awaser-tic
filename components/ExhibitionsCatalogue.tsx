@@ -16,6 +16,8 @@ const MOCK_EXHIBITIONS: ExperienceJourney[] = [
     id: 'e1',
     theme: 'Desert Neons: 2030',
     city: 'Riyadh',
+    // Fix: Added missing 'country' property as required by ExperienceJourney type
+    country: 'Saudi Arabia',
     organization: 'Awasser Studio',
     creator: 'Dr. Noura Al-Saud',
     points: [],
@@ -30,6 +32,8 @@ const MOCK_EXHIBITIONS: ExperienceJourney[] = [
     id: 'e2',
     theme: 'Murals of Masmak',
     city: 'Riyadh',
+    // Fix: Added missing 'country' property as required by ExperienceJourney type
+    country: 'Saudi Arabia',
     organization: 'Heritage Authority',
     creator: 'Historical Society',
     points: [],

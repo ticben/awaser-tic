@@ -51,6 +51,8 @@ export const db = {
         .insert([{
           theme: journey.theme,
           city: journey.city,
+          // Added missing 'country' field mapping for data persistence
+          country: journey.country,
           organization: journey.organization,
           creator: journey.creator,
           points: journey.points,
