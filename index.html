@@ -1,0 +1,103 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Awasser s4 | Urban Virtual Museum</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/4.0.0/model-viewer.min.js"></script>
+  <style>
+    body {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      background-color: #020617;
+      color: #f8fafc;
+      overflow-x: hidden;
+    }
+    .mono { font-family: 'JetBrains Mono', monospace; }
+    
+    .glass-morphism {
+      background: rgba(15, 23, 42, 0.4);
+      backdrop-filter: blur(20px) saturate(180%);
+      -webkit-backdrop-filter: blur(20px) saturate(180%);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+    }
+
+    .glass-effect {
+      background: rgba(30, 30, 40, 0.25);
+      backdrop-filter: blur(16px) saturate(160%);
+      -webkit-backdrop-filter: blur(16px) saturate(160%);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    }
+    
+    .dashboard-card {
+      background: rgba(30, 41, 59, 0.4);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .dashboard-card:hover {
+      border-color: rgba(99, 102, 241, 0.3);
+      background: rgba(30, 41, 59, 0.6);
+      transform: translateY(-4px);
+    }
+
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 10px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(99, 102, 241, 0.5); }
+    
+    @keyframes pulse-soft {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.7; transform: scale(1.05); }
+    }
+    .status-pulse { animation: pulse-soft 2s infinite; }
+    
+    @keyframes entry-pop {
+      0% { transform: scale(0.98); opacity: 0; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+    .animate-entry { animation: entry-pop 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+
+    .view-transition {
+      animation: view-fade-in 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    @keyframes view-fade-in {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes float {
+      0%   { transform: translate(0, 0) translateZ(-200px); opacity: 0.1; }
+      50%  { transform: translate(40px, -80px) translateZ(-150px); opacity: 0.6; }
+      100% { transform: translate(0, 0) translateZ(-200px); opacity: 0.1; }
+    }
+    .animate-float {
+      animation: float linear infinite;
+    }
+
+    .perspective-2000 {
+      perspective: 2000px;
+    }
+  </style>
+<script type="importmap">
+{
+  "imports": {
+    "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "react": "https://esm.sh/react@^19.2.3",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "@google/genai": "https://esm.sh/@google/genai@^1.34.0"
+  }
+}
+</script>
+</head>
+<body>
+  <div id="root"></div>
+</body>
+</html>
