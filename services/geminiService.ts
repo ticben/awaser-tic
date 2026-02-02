@@ -121,6 +121,43 @@ export async function planExperienceJourney(theme: string, startLocation: string
   }
 }
 
+// Gemini as Assistant: Curates content for curator-selected points.
+export async function enhanceJourneyPoints(theme: string, points: any[]) {
+  try {
+    const pointNames = points.map(p => p.title).join(", ");
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-pro-preview',
+      contents: `You are a digital museum curator's assistant. The curator has selected these sites for an exhibition theme: "${theme}".
+      Sites: ${pointNames}.
+      For each site, provide:
+      1. A rich historical and artistic description.
+      2. A "Spatial Narrative Insight" (how it connects to the theme).
+      3. A "Digital Layer Vision" (what kind of AR art should be anchored there).
+      Output as a JSON array corresponding to the sites provided.`,
+      config: {
+        thinkingConfig: { thinkingBudget: 12000 },
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              description: { type: Type.STRING },
+              narrativeInsight: { type: Type.STRING },
+              digitalVision: { type: Type.STRING }
+            },
+            required: ["description", "narrativeInsight", "digitalVision"]
+          }
+        }
+      }
+    });
+    return JSON.parse(response.text);
+  } catch (error) {
+    console.error("Error enhancing points:", error);
+    return null;
+  }
+}
+
 export async function getSiteSuitability(siteName: string) {
   try {
     const response = await ai.models.generateContent({
@@ -217,6 +254,7 @@ export async function getCulturalInsights(siteName: string, artworkTitle: string
     });
     return response.text;
   } catch (error) {
+    // Fixed: Corrected console error logging from unused expression
     console.error("Error getting cultural insights:", error);
     return "This installation bridges the gap between historical architecture and the digital frontier.";
   }
@@ -225,7 +263,6 @@ export async function getCulturalInsights(siteName: string, artworkTitle: string
 // Added missing function to generate a historical video reimagining (Time Warp) using Veo.
 export async function generateHistoricalReimagining(base64Image: string, landmarkName: string) {
   try {
-    // Instantiate a new client right before the call for video generation models as per guidelines.
     const veoAi = new GoogleGenAI({ apiKey: process.env.API_KEY });
     let operation = await veoAi.models.generateVideos({
       model: 'veo-3.1-fast-generate-preview',
@@ -247,7 +284,6 @@ export async function generateHistoricalReimagining(base64Image: string, landmar
     }
 
     const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
-    // The response body contains the MP4 bytes. Append an API key to the URI for direct usage.
     return downloadLink ? `${downloadLink}&key=${process.env.API_KEY}` : null;
   } catch (error) {
     console.error("Error generating historical reimagining:", error);

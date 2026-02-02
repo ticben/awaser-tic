@@ -1,12 +1,12 @@
 
 import React, { useEffect, useRef, useState } from 'react';
-import { X, Sparkles, MessageSquare, Info, Volume2, Square, Loader2, Palette, Waves, Navigation, Monitor, Camera, Send, Quote, Trophy, Move, Radio, Eye, MapPin, Search, Zap, Globe, HelpCircle, ChevronRight, MousePointer2, Mic, MicOff, History as TimeIcon, Play, Wand2 } from 'lucide-react';
+import { X, Sparkles, MessageSquare, Info, Volume2, Square, Loader2, Palette, Waves, Navigation, Monitor, Camera, Send, Quote, Trophy, Move, Radio, Eye, MapPin, Search, Zap, Globe, HelpCircle, ChevronRight, MousePointer2, Mic, MicOff, History as TimeIcon, Play, Wand2, Key } from 'lucide-react';
 import { Artwork } from '../types';
 import { getCulturalInsights, askMuseumGuide, generateNarrationAudio, identifyLandmarkFromImage, generateHistoricalReimagining, generateArtworkVariant } from '../services/geminiService';
 import { GoogleGenAI, LiveServerMessage, Modality, Blob as GenBlob } from '@google/genai';
 import QuizModule from './QuizModule';
 
-// Helper functions for audio encoding/decoding as per Gemini API guidelines
+// Helper functions for audio encoding/decoding
 function encode(bytes: Uint8Array) {
   let binary = '';
   const len = bytes.byteLength;
@@ -90,6 +90,7 @@ const ARViewer: React.FC<ARViewerProps> = ({ artwork, onClose }) => {
 
   const [timeWarpUrl, setTimeWarpUrl] = useState<string | null>(null);
   const [isTimeWarping, setIsTimeWarping] = useState(false);
+  const [needsKeyForVeo, setNeedsKeyForVeo] = useState(false);
 
   const [fluxImageUrl, setFluxImageUrl] = useState<string | null>(null);
   const [isFluxing, setIsFluxing] = useState(false);
@@ -147,7 +148,6 @@ const ARViewer: React.FC<ARViewerProps> = ({ artwork, onClose }) => {
     };
   }, [artwork]);
 
-  // LIVE API INTEGRATION
   const startLiveSession = async () => {
     if (isLiveActive) {
       stopLiveSession();
@@ -179,7 +179,6 @@ const ARViewer: React.FC<ARViewerProps> = ({ artwork, onClose }) => {
             source.connect(scriptProcessor);
             scriptProcessor.connect(inputCtx.destination);
             
-            // Stream frames if in AR mode
             if (viewMode === 'ar' && videoRef.current) {
               frameIntervalRef.current = window.setInterval(() => {
                 const canvas = hiddenCanvasRef.current;
@@ -222,11 +221,7 @@ const ARViewer: React.FC<ARViewerProps> = ({ artwork, onClose }) => {
         config: {
           responseModalities: [Modality.AUDIO],
           speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } },
-          systemInstruction: `You are a helpful, expert museum curator for the Awasser s4 Urban Museum in Riyadh. 
-          You can see what the visitor sees via their camera. 
-          Provide cultural, historical, and artistic insights in a friendly, engaging voice.
-          Keep answers concise and informative. 
-          The visitor is looking at ${artwork?.title} by ${artwork?.artist}.`,
+          systemInstruction: `You are a helpful, expert museum curator for the Awasser s4 Urban Museum in Riyadh. You see what the visitor sees. Look at ${artwork?.title} by ${artwork?.artist}.`,
           outputAudioTranscription: {}
         }
       });
@@ -289,6 +284,14 @@ const ARViewer: React.FC<ARViewerProps> = ({ artwork, onClose }) => {
 
   const startTimeWarp = async () => {
     if (isTimeWarping || !foundLandmark || !videoRef.current) return;
+
+    // Veo Mandatory Key Check
+    const hasKey = await (window as any).aistudio.hasSelectedApiKey();
+    if (!hasKey) {
+      setNeedsKeyForVeo(true);
+      return;
+    }
+
     setIsTimeWarping(true);
     const canvas = hiddenCanvasRef.current;
     if (canvas) {
@@ -297,10 +300,22 @@ const ARViewer: React.FC<ARViewerProps> = ({ artwork, onClose }) => {
       canvas.height = videoRef.current.videoHeight;
       ctx?.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
       const base64 = canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
-      const videoUrl = await generateHistoricalReimagining(base64, foundLandmark.landmark);
-      setTimeWarpUrl(videoUrl);
+      try {
+        const videoUrl = await generateHistoricalReimagining(base64, foundLandmark.landmark);
+        setTimeWarpUrl(videoUrl);
+      } catch (err: any) {
+        if (err.message?.includes("Requested entity was not found")) {
+          setNeedsKeyForVeo(true);
+        }
+      }
     }
     setIsTimeWarping(false);
+  };
+
+  const handleOpenKeySelector = async () => {
+    await (window as any).aistudio.openSelectKey();
+    setNeedsKeyForVeo(false);
+    startTimeWarp(); // Retry after selection
   };
 
   const startSpatialAudio = () => {
@@ -410,7 +425,7 @@ const ARViewer: React.FC<ARViewerProps> = ({ artwork, onClose }) => {
     setChatQuestion('');
     setIsChatLoading(true);
     setChatResponse(null);
-    const answer = await askMuseumGuide(q, `Artwork: ${artwork?.title}. Category: ${artwork?.category}.`);
+    const answer = await askMuseumGuide(q, `Artwork: ${artwork?.title}.`);
     setChatResponse(answer);
     setIsChatLoading(false);
   };
@@ -450,7 +465,6 @@ const ARViewer: React.FC<ARViewerProps> = ({ artwork, onClose }) => {
           </div>
         )}
         
-        {/* Spatial Interaction Overlay */}
         <div 
           ref={containerRef}
           onMouseDown={handleDragStart} onMouseMove={handleDragMove} onMouseUp={handleDragEnd}
@@ -471,13 +485,11 @@ const ARViewer: React.FC<ARViewerProps> = ({ artwork, onClose }) => {
             ) : (
               <div className="relative group max-w-[90vw] max-h-[70vh]">
                 <img src={artwork?.imageUrl} className={`rounded-2xl shadow-[0_0_50px_rgba(0,0,0,0.8)] border border-white/10 transition-all duration-1000 ${viewMode === 'ar' ? 'animate-ar-pulse opacity-80 scale-90' : 'scale-100 opacity-100'}`} alt="Digital Art" />
-                {viewMode === 'studio' && <div className="absolute -inset-4 bg-indigo-500/10 blur-3xl -z-10 rounded-full animate-pulse"></div>}
               </div>
             )}
           </div>
         </div>
 
-        {/* Veo Time Warp Overlay */}
         {timeWarpUrl && (
           <div className="absolute inset-0 z-[100] bg-black/95 flex items-center justify-center p-4">
              <div className="relative w-full max-w-lg aspect-[9/16] glass-morphism rounded-[48px] overflow-hidden border border-white/10 shadow-2xl">
@@ -492,9 +504,6 @@ const ARViewer: React.FC<ARViewerProps> = ({ artwork, onClose }) => {
                    </div>
                    <button onClick={() => setTimeWarpUrl(null)} className="p-3 bg-black/40 backdrop-blur-md rounded-full text-white"><X size={20} /></button>
                 </div>
-                <div className="absolute bottom-8 left-8 right-8 p-6 glass-morphism rounded-[30px] border border-white/10">
-                   <p className="text-xs text-white/90 leading-relaxed italic">"Witnessing the layers of time at {foundLandmark?.landmark}. This visualization represents the documented historical structure."</p>
-                </div>
              </div>
           </div>
         )}
@@ -507,7 +516,7 @@ const ARViewer: React.FC<ARViewerProps> = ({ artwork, onClose }) => {
                   <div className="p-3 bg-indigo-600/20 rounded-2xl text-indigo-400 border border-indigo-500/20"><MapPin size={24} /></div>
                   <div>
                     <h3 className="text-lg font-black text-white">{foundLandmark.landmark}</h3>
-                    <p className="text-[10px] text-indigo-400 font-black uppercase tracking-widest">Recognized Landmark</p>
+                    <p className="text-[10px] text-indigo-400 font-black uppercase tracking-widest">Landmark Recognized</p>
                   </div>
                 </div>
                 <p className="text-xs text-slate-300 leading-relaxed mb-6 font-medium">{foundLandmark.history}</p>
@@ -519,7 +528,7 @@ const ARViewer: React.FC<ARViewerProps> = ({ artwork, onClose }) => {
                     className="w-full py-4 bg-gradient-to-r from-fuchsia-600 to-indigo-600 rounded-2xl text-white text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 shadow-lg disabled:opacity-50 transition-all"
                   >
                     {isTimeWarping ? <Loader2 className="animate-spin" size={16} /> : <TimeIcon size={16} />}
-                    Enter Time Warp
+                    History Warp (Veo)
                   </button>
                   <button 
                     onClick={handleFlux}
@@ -527,20 +536,35 @@ const ARViewer: React.FC<ARViewerProps> = ({ artwork, onClose }) => {
                     className="w-full py-4 bg-white/5 border border-indigo-500/30 rounded-2xl text-indigo-400 text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-indigo-600 hover:text-white transition-all disabled:opacity-50"
                   >
                     {isFluxing ? <Loader2 className="animate-spin" size={16} /> : <Wand2 size={16} />}
-                    Initiate Digital Flux
+                    Digital Flux
                   </button>
-                </div>
-
-                <div className="pt-4 border-t border-white/5 mt-4">
-                  <p className="text-[9px] text-slate-500 font-black uppercase tracking-widest mb-2">Suggested Art Theme</p>
-                  <div className="flex items-center gap-2 text-indigo-400 text-xs font-bold">
-                    <Sparkles size={14} /> {foundLandmark.suggestedTheme}
-                  </div>
                 </div>
              </div>
           </div>
         )}
       </div>
+
+      {/* API KEY MODAL FOR VEO */}
+      {needsKeyForVeo && (
+        <div className="absolute inset-0 z-[200] flex items-center justify-center bg-black/90 backdrop-blur-md p-8">
+           <div className="glass-morphism rounded-[48px] border border-fuchsia-500/30 p-10 max-w-sm w-full shadow-2xl space-y-8 animate-in zoom-in-95 duration-300">
+              <div className="flex flex-col items-center text-center space-y-4">
+                 <div className="w-20 h-20 bg-fuchsia-600 rounded-[30px] flex items-center justify-center text-white shadow-2xl shadow-fuchsia-600/40 mb-2">
+                   <Key size={40} className="animate-pulse" />
+                 </div>
+                 <h3 className="text-2xl font-black text-white tracking-tight uppercase">Premium Synthesis</h3>
+                 <p className="text-xs text-slate-400 font-medium">Historical reconstruction requires a paid project API key. See <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" className="text-fuchsia-400 underline">billing docs</a>.</p>
+              </div>
+              <button 
+                onClick={handleOpenKeySelector}
+                className="w-full py-5 bg-white text-fuchsia-900 rounded-[24px] font-black text-xs uppercase tracking-widest shadow-2xl hover:scale-105 active:scale-95 transition-all flex items-center justify-center gap-3"
+              >
+                Select Paid API Key <ChevronRight size={16} />
+              </button>
+              <button onClick={() => setNeedsKeyForVeo(false)} className="w-full text-[10px] font-black text-slate-500 uppercase tracking-widest">Cancel</button>
+           </div>
+        </div>
+      )}
 
       {/* TOP CONTROLS */}
       <div className="relative z-50 flex justify-between items-start p-8 pt-16 pointer-events-none">
@@ -551,25 +575,17 @@ const ARViewer: React.FC<ARViewerProps> = ({ artwork, onClose }) => {
               <Monitor size={16} /> Studio
             </button>
             <button onClick={() => setViewMode('ar')} className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-all ${viewMode === 'ar' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'}`}>
-              <Camera size={16} /> AR View
+              <Camera size={16} /> AR
             </button>
           </div>
         </div>
 
         <div className="flex gap-4 pointer-events-auto">
-          {/* Live Guide Button */}
           <button 
             onClick={startLiveSession}
             className={`p-4 rounded-full text-white backdrop-blur-xl border border-white/10 transition-all ${isLiveActive ? 'bg-red-600 animate-pulse shadow-[0_0_20px_rgba(220,38,38,0.5)]' : 'bg-black/40'}`}
           >
             {isLiveActive ? <Mic size={24} /> : <MicOff size={24} />}
-          </button>
-          
-          <button 
-            onClick={() => setShowTutorial(true)} 
-            className="p-4 bg-black/40 backdrop-blur-xl rounded-full text-white border border-white/10 hover:bg-indigo-600/50 transition-all"
-          >
-            <HelpCircle size={24} />
           </button>
           
           {viewMode === 'ar' && (
@@ -579,11 +595,6 @@ const ARViewer: React.FC<ARViewerProps> = ({ artwork, onClose }) => {
               className={`p-4 rounded-full text-white backdrop-blur-xl border border-white/10 transition-all ${isScanning ? 'bg-indigo-600 shadow-[0_0_20px_rgba(99,102,241,0.5)]' : 'bg-black/40'}`}
             >
               {isScanning ? <Loader2 size={24} className="animate-spin" /> : <Zap size={24} />}
-            </button>
-          )}
-          {artwork?.category === 'Soundscape' && (
-            <button onClick={() => isSpatialAudioActive ? stopSpatialAudio() : startSpatialAudio()} className={`p-4 rounded-full text-white backdrop-blur-xl border border-white/10 transition-all ${isSpatialAudioActive ? 'bg-fuchsia-600' : 'bg-black/40'}`}>
-              <Waves size={24} className={isSpatialAudioActive ? 'animate-pulse' : ''} />
             </button>
           )}
           <button onClick={() => setCurrentFilter(f => f === 'none' ? 'glow' : 'none')} className={`p-4 rounded-full text-white backdrop-blur-xl border border-white/10 ${currentFilter !== 'none' ? 'bg-indigo-600' : 'bg-black/40'}`}>
@@ -596,66 +607,34 @@ const ARViewer: React.FC<ARViewerProps> = ({ artwork, onClose }) => {
       <div className="relative z-50 p-8 pb-12 mt-auto pointer-events-none">
         <div className="max-w-xl mx-auto w-full pointer-events-auto">
           
-          {/* Live Transcription Bar */}
           {isLiveActive && liveTranscription && (
             <div className="mb-6 animate-in slide-in-from-bottom-4 bg-black/60 backdrop-blur-2xl rounded-3xl p-6 border border-white/10 shadow-2xl">
-              <div className="flex items-center gap-3 mb-3">
-                 <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-                 <span className="text-[10px] font-black text-white uppercase tracking-[0.2em]">Curator Live Response</span>
-              </div>
               <p className="text-sm text-indigo-200 leading-relaxed italic font-medium">"{liveTranscription}"</p>
             </div>
           )}
 
-          {isFluxing && (
-             <div className="mb-6 animate-in slide-in-from-bottom-4 bg-indigo-900/60 backdrop-blur-2xl rounded-3xl p-8 border border-indigo-500/30 flex items-center gap-6">
-                <Loader2 className="animate-spin text-white" size={32} />
-                <div>
-                   <h4 className="text-white font-black text-sm uppercase tracking-widest">Initiating Digital Flux</h4>
-                   <p className="text-xs text-indigo-200">Reimagining urban geometry with generative synthesis...</p>
-                </div>
-             </div>
-          )}
-
           {!showQuiz && !showTutorial && !isFluxing && (
             <div className="glass-morphism rounded-[40px] p-8 border border-white/10 shadow-2xl space-y-6">
-              {artwork?.category === 'Soundscape' && isSpatialAudioActive && (
-                <div className="space-y-4 animate-in slide-in-from-bottom-2">
-                  <canvas ref={canvasRef} width={400} height={40} className="w-full h-10 rounded-xl bg-black/20" />
-                  <div className="flex items-center gap-4 bg-white/5 p-4 rounded-2xl border border-white/5">
-                    <Move size={16} className="text-indigo-400" />
-                    <div className="flex-1 space-y-2">
-                      <div className="flex justify-between text-[8px] font-black text-slate-500 uppercase tracking-widest">
-                        <span>Physical Anchor</span> <span>Distance: {spatialDistance}m</span>
-                      </div>
-                      <input type="range" min="1" max="10" step="0.1" value={spatialDistance} onChange={(e) => setSpatialDistance(parseFloat(e.target.value))} className="w-full accent-indigo-500 bg-white/10 h-1 rounded-full appearance-none cursor-pointer" />
-                    </div>
-                  </div>
-                </div>
-              )}
-
               <div className="flex justify-between items-center">
                 <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-2xl bg-indigo-600/20 flex items-center justify-center text-indigo-400 border border-indigo-500/20"><Sparkles size={24} className="animate-pulse" /></div>
+                  <div className="w-12 h-12 rounded-2xl bg-indigo-600/20 flex items-center justify-center text-indigo-400 border border-indigo-500/20"><Sparkles size={24} /></div>
                   <div>
-                    <h4 className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.3em] mb-1">AI Guide Active</h4>
+                    <h4 className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.3em] mb-1">Nexus Active</h4>
                     <p className="text-sm font-black text-white">{artwork?.title}</p>
                   </div>
                 </div>
-                <div className="flex gap-2">
-                  <button onClick={startNarration} className="p-3 bg-white/5 rounded-2xl text-indigo-300 hover:bg-indigo-600 hover:text-white transition-all">
-                    {isAudioLoading ? <Loader2 className="animate-spin" size={20} /> : isNarrating ? <Square size={20} /> : <Volume2 size={20} />}
-                  </button>
-                </div>
+                <button onClick={startNarration} className="p-3 bg-white/5 rounded-2xl text-indigo-300">
+                  {isAudioLoading ? <Loader2 className="animate-spin" size={20} /> : isNarrating ? <Square size={20} /> : <Volume2 size={20} />}
+                </button>
               </div>
 
-              {!isLiveActive && <p className="text-sm text-slate-300 leading-relaxed pl-8 italic border-l-2 border-indigo-500/20">{insight}</p>}
+              <p className="text-sm text-slate-300 leading-relaxed italic border-l-2 border-indigo-500/20 pl-4">{insight}</p>
 
               <div className="flex gap-4">
-                <button onClick={() => setShowChat(true)} className="flex-1 py-4 bg-indigo-600 rounded-2xl text-white text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-indigo-500 active:scale-95 transition-all shadow-xl shadow-indigo-600/20">
+                <button onClick={() => setShowChat(true)} className="flex-1 py-4 bg-indigo-600 rounded-2xl text-white text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-3">
                   <MessageSquare size={18} /> Tour Guide
                 </button>
-                <button onClick={() => setShowQuiz(true)} className="px-6 bg-white/5 rounded-2xl text-white border border-white/10 flex items-center justify-center hover:bg-white/10 transition-all">
+                <button onClick={() => setShowQuiz(true)} className="px-6 bg-white/5 rounded-2xl text-white border border-white/10 flex items-center justify-center">
                   <Trophy size={20} />
                 </button>
               </div>
@@ -664,79 +643,37 @@ const ARViewer: React.FC<ARViewerProps> = ({ artwork, onClose }) => {
         </div>
       </div>
 
-      {/* TUTORIAL OVERLAY */}
       {showTutorial && (
-        <div className="absolute inset-0 z-[120] flex items-center justify-center bg-black/80 backdrop-blur-md p-8 animate-in fade-in duration-500">
-          <div className="glass-morphism rounded-[48px] border border-white/10 p-10 max-w-sm w-full shadow-2xl space-y-8 animate-in zoom-in-95 duration-300">
-            <div className="flex flex-col items-center text-center space-y-4">
-               <div className="w-20 h-20 bg-indigo-600 rounded-[30px] flex items-center justify-center text-white shadow-2xl shadow-indigo-600/40 mb-2">
-                 <Globe size={40} className="animate-pulse" />
-               </div>
-               <h3 className="text-2xl font-black text-white tracking-tight uppercase">Interface Guide</h3>
-               <p className="text-xs text-slate-400 font-medium">Master the Awasser spatial protocol for an optimal experience.</p>
+        <div className="absolute inset-0 z-[120] flex items-center justify-center bg-black/80 backdrop-blur-md p-8">
+          <div className="glass-morphism rounded-[48px] border border-white/10 p-10 max-w-sm w-full shadow-2xl space-y-8">
+            <div className="text-center space-y-4">
+               <Globe size={48} className="text-indigo-500 mx-auto animate-pulse" />
+               <h3 className="text-2xl font-black text-white uppercase">Experience Guide</h3>
             </div>
-
-            <div className="space-y-6">
-               <div className="flex items-start gap-5">
-                 <div className="p-3 bg-white/5 rounded-2xl text-indigo-400 border border-white/5"><Mic size={18} /></div>
-                 <div>
-                   <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-1">Live AI Guide</h4>
-                   <p className="text-[10px] text-slate-500 leading-relaxed">Toggle the mic to speak directly with our expert curator in real-time.</p>
-                 </div>
-               </div>
-               
-               <div className="flex items-start gap-5">
-                 <div className="p-3 bg-white/5 rounded-2xl text-indigo-400 border border-white/5"><Wand2 size={18} /></div>
-                 <div>
-                   <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-1">Digital Flux</h4>
-                   <p className="text-[10px] text-slate-500 leading-relaxed">Artistically reimagine any urban site with our Flux synthesis engine.</p>
-                 </div>
-               </div>
-
-               <div className="flex items-start gap-5">
-                 <div className="p-3 bg-white/5 rounded-2xl text-indigo-400 border border-white/5"><TimeIcon size={18} /></div>
-                 <div>
-                   <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-1">Time Warp</h4>
-                   <p className="text-[10px] text-slate-500 leading-relaxed">Scan landmarks to unlock cinematic historical reconstructions.</p>
-                 </div>
-               </div>
-            </div>
-
-            <button 
-              onClick={() => setShowTutorial(false)}
-              className="w-full py-5 bg-white text-indigo-900 rounded-[24px] font-black text-xs uppercase tracking-[0.2em] shadow-2xl hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2"
-            >
-              Engage Layer <ChevronRight size={16} />
-            </button>
+            <button onClick={() => setShowTutorial(false)} className="w-full py-5 bg-white text-indigo-900 rounded-[24px] font-black text-xs uppercase tracking-widest">Enter Layer <ChevronRight size={16} /></button>
           </div>
         </div>
       )}
 
       {showChat && (
-        <div className="absolute inset-0 z-[100] flex flex-col bg-slate-950/90 backdrop-blur-2xl animate-in fade-in duration-300">
+        <div className="absolute inset-0 z-[100] flex flex-col bg-slate-950/90 backdrop-blur-2xl">
            <div className="flex-1 flex flex-col max-w-2xl mx-auto w-full">
               <header className="p-8 pt-20 flex justify-between items-center border-b border-white/5">
-                <div className="flex items-center gap-4">
-                  <div className="w-14 h-14 rounded-[20px] bg-indigo-600 flex items-center justify-center text-white shadow-2xl"><Sparkles size={28} /></div>
-                  <div><h3 className="text-white font-black text-lg tracking-tight">Digital Arts Guide</h3><p className="text-[10px] text-indigo-400 font-bold uppercase tracking-widest">Contextual Analysis</p></div>
-                </div>
-                <button onClick={() => setShowChat(false)} className="p-4 bg-white/5 rounded-2xl text-slate-400 hover:text-white transition-all"><X size={24} /></button>
+                <h3 className="text-white font-black text-lg">Digital Arts Guide</h3>
+                <button onClick={() => setShowChat(false)} className="p-4 bg-white/5 rounded-2xl text-slate-400"><X size={24} /></button>
               </header>
-              <div className="flex-1 overflow-y-auto p-8 space-y-8 custom-scrollbar">
+              <div className="flex-1 overflow-y-auto p-8 space-y-8">
                 {chatResponse && (
-                  <div className="flex gap-5 animate-in slide-in-from-bottom-4 duration-500">
-                    <div className="w-12 h-12 rounded-2xl bg-indigo-600 flex-shrink-0 flex items-center justify-center text-white shadow-xl"><Sparkles size={24} /></div>
-                    <div className="bg-indigo-600/10 p-8 rounded-[35px] border border-indigo-500/20 max-w-[85%] shadow-inner">
-                      <p className="text-sm text-white leading-relaxed">{chatResponse}</p>
-                    </div>
+                  <div className="bg-indigo-600/10 p-8 rounded-[35px] border border-indigo-500/20 text-white text-sm">
+                    {chatResponse}
                   </div>
                 )}
-                {isChatLoading && <div className="flex gap-5 animate-pulse"><div className="w-12 h-12 rounded-2xl bg-indigo-600/20 flex-shrink-0 flex items-center justify-center text-indigo-400"><Loader2 className="animate-spin" size={24} /></div></div>}
+                {isChatLoading && <Loader2 className="animate-spin text-indigo-500 mx-auto" size={32} />}
               </div>
-              <footer className="p-8 bg-slate-900/50 border-t border-white/5 space-y-8 pb-16">
+              <footer className="p-8 border-t border-white/5 pb-16">
                 <form onSubmit={handleAsk} className="flex gap-4">
-                  <input value={chatQuestion} onChange={e => setChatQuestion(e.target.value)} placeholder="Ask about the digital art technique..." className="flex-1 bg-white/5 border border-white/10 rounded-[25px] px-8 py-5 text-sm text-white outline-none focus:border-indigo-500 transition-all shadow-inner" />
-                  <button type="submit" disabled={isChatLoading || !chatQuestion.trim()} className="bg-indigo-600 p-5 rounded-[25px] text-white disabled:opacity-50 hover:bg-indigo-500 transition-all shadow-2xl shadow-indigo-600/40"><Send size={24} /></button>
+                  <input value={chatQuestion} onChange={e => setChatQuestion(e.target.value)} placeholder="Ask about the artwork..." className="flex-1 bg-white/5 border border-white/10 rounded-[25px] px-8 py-5 text-white" />
+                  <button type="submit" disabled={isChatLoading} className="bg-indigo-600 p-5 rounded-[25px] text-white"><Send size={24} /></button>
                 </form>
               </footer>
            </div>
@@ -747,10 +684,10 @@ const ARViewer: React.FC<ARViewerProps> = ({ artwork, onClose }) => {
         <div className="absolute inset-0 z-[150] bg-[#020617]/95 backdrop-blur-3xl flex items-center justify-center p-6">
            <div className="glass-morphism rounded-[40px] border border-white/10 w-full max-w-lg shadow-2xl overflow-hidden">
               <header className="p-8 border-b border-white/5 flex justify-between items-center bg-indigo-600/10">
-                 <div className="flex items-center gap-3"><Trophy className="text-amber-400" size={24} /><h3 className="text-white font-black text-lg uppercase tracking-tight">Cultural Challenge</h3></div>
-                 <button onClick={() => setShowQuiz(false)} className="p-2 text-slate-400 hover:text-white transition-all"><X size={24} /></button>
+                 <h3 className="text-white font-black text-lg uppercase">Cultural Challenge</h3>
+                 <button onClick={() => setShowQuiz(false)} className="text-slate-400"><X size={24} /></button>
               </header>
-              <QuizModule artwork={artwork} onClose={() => setShowQuiz(false)} onComplete={(score) => { alert(`Challenge Complete! Score: ${score}/3`); setShowQuiz(false); }} />
+              <QuizModule artwork={artwork} onClose={() => setShowQuiz(false)} onComplete={(score) => { setShowQuiz(false); }} />
            </div>
         </div>
       )}

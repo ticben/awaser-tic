@@ -12,9 +12,8 @@ import JourneyLanding from './components/JourneyLanding';
 import ExhibitionsCatalogue from './components/ExhibitionsCatalogue';
 import { ViewState, Artwork, PortalMode, Language, ExperienceJourney } from './types';
 import { translations } from './translations';
-import { ARTWORKS } from './constants';
+import { ARTWORKS as LOCAL_ARTWORKS } from './constants';
 import { db } from './lib/supabase';
-// Added missing RefreshCw import from lucide-react
 import { RefreshCw } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -25,19 +24,24 @@ const App: React.FC = () => {
   const [lang, setLang] = useState<Language>('ar');
   const [activeJourney, setActiveJourney] = useState<ExperienceJourney | null>(null);
   const [publishedExhibitions, setPublishedExhibitions] = useState<ExperienceJourney[]>([]);
+  const [cloudArtworks, setCloudArtworks] = useState<Artwork[]>([]);
   const [isSyncing, setIsSyncing] = useState(true);
 
   const t = translations[lang];
 
-  // Fetch data from Supabase on mount
+  // Combine cloud data with local fallback
+  const effectiveArtworks = cloudArtworks.length > 0 ? cloudArtworks : LOCAL_ARTWORKS;
+
   useEffect(() => {
     async function syncNexus() {
       try {
         setIsSyncing(true);
-        const [exhibitions] = await Promise.all([
-          db.exhibitions.getAll()
+        const [exhibitions, artworks] = await Promise.all([
+          db.exhibitions.getAll(),
+          db.artworks.getAll()
         ]);
         setPublishedExhibitions(exhibitions || []);
+        setCloudArtworks(artworks || []);
       } catch (error) {
         console.warn("Supabase Sync Failed. Falling back to session state.", error);
       } finally {
@@ -49,7 +53,7 @@ const App: React.FC = () => {
 
   const enterARView = () => {
     if (!selectedArtwork) {
-      setSelectedArtwork(ARTWORKS[0]);
+      setSelectedArtwork(effectiveArtworks[0]);
     }
     setView('ar-view');
   };
@@ -126,9 +130,9 @@ const App: React.FC = () => {
                 />
               );
             case 'explore':
-              return <MapExplorer onSelectArtwork={handleArtworkSelection} lang={lang} />;
+              return <MapExplorer artworks={effectiveArtworks} onSelectArtwork={handleArtworkSelection} lang={lang} />;
             case 'gallery':
-              return <GalleryView onSelectArtwork={handleArtworkSelection} lang={lang} />;
+              return <GalleryView artworks={effectiveArtworks} onSelectArtwork={handleArtworkSelection} lang={lang} />;
             case 'play':
               return <UrbanPlay lang={lang} />;
             case 'journey-landing':
@@ -154,7 +158,7 @@ const App: React.FC = () => {
       {isSyncing && view !== 'ar-view' && (
         <div className="absolute top-4 right-4 z-[110] flex items-center gap-2 px-3 py-1 bg-indigo-600/20 backdrop-blur-md rounded-full border border-indigo-500/30">
           <RefreshCw size={10} className="text-indigo-400 animate-spin" />
-          <span className="text-[8px] font-black text-indigo-400 uppercase tracking-widest">Syncing Nexus</span>
+          <span className="text-[8px] font-black text-indigo-400 uppercase tracking-widest">Nexus Active</span>
         </div>
       )}
 
